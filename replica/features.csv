@@ -1,21 +1,21 @@
 feature,area,priority,original,clone,notes
-Collegarsi a un server inserendo l'URL,onboarding,must,yes,no,verifica con /System/Info/Public
-Accesso con utente e password,onboarding,must,yes,no,token salvato nel Keychain
-Restare collegati tra un avvio e l'altro,onboarding,must,yes,no,
-Home: Continua a guardare con barra di avanzamento,home,must,yes,no,P2: deve essere sempre aggiornata
-Home: Prossimi episodi,home,must,yes,no,
+Collegarsi a un server inserendo l'URL,onboarding,must,yes,yes,prova https e http se manca lo schema
+Accesso con utente e password,onboarding,must,yes,yes,token salvato nel Keychain
+Restare collegati tra un avvio e l'altro,onboarding,must,yes,yes,token nel Keychain
+Home: Continua a guardare con barra di avanzamento,home,must,yes,yes,P2: deve essere sempre aggiornata
+Home: Prossimi episodi,home,must,yes,yes,
 Home: Aggiunti di recente per libreria,home,must,yes,no,
-Home ricaricata quando l'app torna in primo piano,home,must,partial,no,P2
+Home ricaricata quando l'app torna in primo piano,home,must,partial,yes,più cache della home all'avvio
 Elenco librerie,librerie,must,yes,no,
 Griglia di film o serie con scorrimento infinito,librerie,must,yes,no,
 Scheda film con Riproduci o Riprendi da,dettaglio,must,yes,no,P3: apertura veloce
 Scheda serie con stagioni ed episodi,dettaglio,must,yes,no,
-Riproduzione con scelta automatica diretta o transcodifica,player,must,yes,no,P3
-Riprendere dalla posizione salvata,player,must,yes,no,
-Invio periodico dell'avanzamento al server,player,must,partial,no,P2: ogni 10 s e a ogni pausa
-Avanzamento salvato quando l'app va in background o viene chiusa,player,must,partial,no,P2
-Coda locale degli invii falliti con nuovi tentativi,player,must,partial,no,P2 (cfr. issue #2438)
-Recupero automatico dagli stalli di rete,player,must,partial,no,P1
+Riproduzione con scelta automatica diretta o transcodifica,player,must,yes,yes,Apple → VLC → HLS del server
+Riprendere dalla posizione salvata,player,must,yes,yes,
+Invio periodico dell'avanzamento al server,player,must,partial,yes,ogni 10 s e a ogni pausa o seek
+Avanzamento salvato quando l'app va in background o viene chiusa,player,must,partial,yes,coda su disco + background task
+Coda locale degli invii falliti con nuovi tentativi,player,must,partial,yes,"flush all'avvio, in primo piano e al ritorno della rete"
+Recupero automatico dagli stalli di rete,player,must,partial,yes,"riapre dalla stessa posizione, massimo 3 volte"
 Scelta della traccia audio,player,must,yes,no,
 Scelta dei sottotitoli,player,must,yes,no,
 Ricerca,ricerca,must,yes,no,
