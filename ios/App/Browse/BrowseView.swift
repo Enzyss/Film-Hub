@@ -16,6 +16,8 @@ final class CatalogModel {
 
     static let rowLimit = 20
     static let parallelRows = 4
+    /// A platform or genre with fewer titles than this on the server is hidden.
+    static let minRowItems = 4
 
     init(kind: CatalogKind) {
         self.kind = kind
@@ -96,7 +98,7 @@ struct BrowseView: View {
 
                     ForEach(model.rows) { row in
                         let items = model.items(for: row)
-                        if !items.isEmpty {
+                        if items.count >= CatalogModel.minRowItems {
                             ItemRow(title: row.title, items: items, api: app.api,
                                     style: row.style, seeAll: row)
                         } else if !model.loaded.contains(row.id) {

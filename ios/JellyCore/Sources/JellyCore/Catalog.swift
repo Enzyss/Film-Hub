@@ -11,10 +11,17 @@ public struct CatalogQuery: Codable, Hashable, Sendable {
     public var unplayedOnly: Bool = false
     public var minCommunityRating: Double?
     public var searchTerm: String?
+    /// Only titles with a TMDB entry: filters out home videos and odd uploads.
+    public var knownTitlesOnly: Bool = false
+    /// Hide titles dated in the future (announced, not yet out).
+    public var releasedOnly: Bool = false
 
     public init(itemTypes: [String], genres: [String] = [], studios: [String] = [],
                 sortBy: String = "DateCreated,SortName", descending: Bool = true,
-                unplayedOnly: Bool = false, minCommunityRating: Double? = nil, searchTerm: String? = nil) {
+                unplayedOnly: Bool = false, minCommunityRating: Double? = nil, searchTerm: String? = nil,
+                knownTitlesOnly: Bool = false, releasedOnly: Bool = false) {
+        self.knownTitlesOnly = knownTitlesOnly
+        self.releasedOnly = releasedOnly
         self.itemTypes = itemTypes
         self.genres = genres
         self.studios = studios
@@ -29,7 +36,7 @@ public struct CatalogQuery: Codable, Hashable, Sendable {
     /// Never MediaSources: on the user's server that makes a 25-item page take 4.5 s.
     public static let cardFields = "ProviderIds,PrimaryImageAspectRatio,ChildCount,Genres"
 
-    public func queryItems(userId: String, startIndex: Int, limit: Int) -> [URLQueryItem] {
+    public func queryItems(userId: String, startIndex: Int, limit: Int, now: Date = Date()) -> [URLQueryItem] {
         var q: [URLQueryItem] = [
             URLQueryItem(name: "userId", value: userId),
             URLQueryItem(name: "recursive", value: "true"),
@@ -49,6 +56,12 @@ public struct CatalogQuery: Codable, Hashable, Sendable {
         if unplayedOnly { q.append(URLQueryItem(name: "isPlayed", value: "false")) }
         if let r = minCommunityRating { q.append(URLQueryItem(name: "minCommunityRating", value: String(r))) }
         if let s = searchTerm, !s.isEmpty { q.append(URLQueryItem(name: "searchTerm", value: s)) }
+        if knownTitlesOnly { q.append(URLQueryItem(name: "hasTmdbId", value: "true")) }
+        if releasedOnly {
+            let f = ISO8601DateFormatter()
+            f.formatOptions = [.withFullDate]
+            q.append(URLQueryItem(name: "maxPremiereDate", value: f.string(from: now)))
+        }
         return q
     }
 }
@@ -196,9 +209,12 @@ public enum Catalog {
         }
         for g in GenreGroup.all {
             if kind == .movies, g.title == "Reality" { continue }
+            // Newest releases rated 6.5+: tested on the user's server, sorting
+            // by score alone surfaces obscure 10/10 titles with a few votes.
             rows.append(CatalogRow(id: "\(kind.rawValue)-g-\(g.title)", title: g.title,
                                    query: CatalogQuery(itemTypes: types, genres: g.names,
-                                                       sortBy: "CommunityRating,SortName", minCommunityRating: 6)))
+                                                       sortBy: "PremiereDate,SortName", minCommunityRating: 6.5,
+                                                       knownTitlesOnly: true, releasedOnly: true)))
         }
         return rows
     }

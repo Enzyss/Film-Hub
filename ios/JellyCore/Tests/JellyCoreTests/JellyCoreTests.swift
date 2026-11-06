@@ -389,3 +389,14 @@ final class TracksTests: XCTestCase {
                        [.vlcDirect(s)])
     }
 }
+
+final class GenreRowTests: XCTestCase {
+    func testGenreRowsShowRecentKnownReleases() throws {
+        let row = try XCTUnwrap(Catalog.rows(for: .movies).first { $0.title == "Azione" })
+        let now = ISO8601DateFormatter().date(from: "2026-11-06T10:00:00Z")!
+        let items = row.query.queryItems(userId: "u", startIndex: 0, limit: 20, now: now)
+        XCTAssertEqual(items.first { $0.name == "hasTmdbId" }?.value, "true")
+        XCTAssertEqual(items.first { $0.name == "maxPremiereDate" }?.value, "2026-11-06")
+        XCTAssertEqual(items.first { $0.name == "sortBy" }?.value, "PremiereDate,SortName")
+    }
+}
