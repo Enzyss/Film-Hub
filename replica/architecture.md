@@ -74,7 +74,7 @@ Header su ogni chiamata:
 | POST /Sessions/Playing | inizio visione | utente | PlaybackStateInfo | 204 | F02 |
 | POST /Sessions/Playing/Progress | avanzamento (ogni 10 s, pausa, background) | utente | PositionTicks, IsPaused, PlaySessionId, PlayMethod… | 204 | F05 |
 | POST /Sessions/Playing/Stopped | fine visione | utente | PositionTicks, PlaySessionId | 204 | F05 |
-| POST /UserItems/{id}/UserData | scrive la posizione direttamente (invii in coda, a sessione ormai chiusa) | utente | { PlaybackPositionTicks, LastPlayedDate } | UserData | F05 |
+| POST /UserItems/{id}/UserData | non usato: 403 per utenti non admin sul server dell utente (vedi server-test.md) | — | — | — | — |
 | POST/DELETE /UserPlayedItems/{id} | segna visto / non visto | utente | — | UserData | should |
 | GET /Items/{id}/Images/{Primary\|Backdrop\|Thumb}?fillWidth=&quality=85&tag= | immagini ridimensionate | utente | — | jpeg/webp | tutte |
 
@@ -104,7 +104,7 @@ Jobs (nell'app):
 - **Avanzamento (P2)**: una chiusura dal multitasking non lascia tempo per una
   chiamata di rete. Per questo l'avanzamento si salva *prima* in coda locale
   (scrittura su file, istantanea) e poi si invia. Se l'invio non parte, ci pensa
-  il flush al prossimo avvio con `/UserItems/{id}/UserData`. Al passaggio in
+  il flush al prossimo avvio, che reinvia la posizione come `/Sessions/Playing/Stopped` (provato sul server reale). Al passaggio in
   background si usa `beginBackgroundTask` per completare l'invio.
 - **Idempotenza**: gli invii sono "l'ultima posizione vince", quindi ripeterli
   è innocuo. La coda tiene una voce per titolo, la più recente; un invio vecchio

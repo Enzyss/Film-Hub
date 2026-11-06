@@ -174,14 +174,13 @@ final class FakeTransport: ProgressTransport, @unchecked Sendable {
     private let lock = NSLock()
     private var _online = true
     private var _reports: [(ReportKind, PlaybackReport)] = []
-    private var _saved: [(String, UserDataUpdate)] = []
 
     var online: Bool {
         get { lock.withLock { _online } }
         set { lock.withLock { _online = newValue } }
     }
     var reports: [(ReportKind, PlaybackReport)] { lock.withLock { _reports } }
-    var saved: [(String, UserDataUpdate)] { lock.withLock { _saved } }
+    var stopped: [PlaybackReport] { reports.filter { $0.0 == .stopped }.map(\.1) }
 
     private func hit(_ kind: ReportKind, _ r: PlaybackReport) throws {
         try lock.withLock {
@@ -193,12 +192,6 @@ final class FakeTransport: ProgressTransport, @unchecked Sendable {
     func reportStart(_ r: PlaybackReport) async throws { try hit(.start, r) }
     func reportProgress(_ r: PlaybackReport) async throws { try hit(.progress, r) }
     func reportStopped(_ r: PlaybackReport) async throws { try hit(.stopped, r) }
-    func saveUserData(itemId: String, update: UserDataUpdate) async throws {
-        try lock.withLock {
-            guard _online else { throw JellyfinError.network("offline") }
-            _saved.append((itemId, update))
-        }
-    }
 }
 
 final class ProgressSyncTests: XCTestCase {
@@ -246,9 +239,11 @@ final class ProgressSyncTests: XCTestCase {
 
         fake.online = true
         await relaunched.flush()
-        XCTAssertEqual(fake.saved.count, 1)
-        XCTAssertEqual(fake.saved.first?.1.playbackPositionTicks, 400)
-        XCTAssertNotNil(fake.saved.first?.1.lastPlayedDate)
+        // Replayed as a "stopped" report: the path the real server accepts.
+        XCTAssertEqual(fake.stopped.count, 1)
+        XCTAssertEqual(fake.stopped.first?.positionTicks, 400)
+        XCTAssertEqual(fake.stopped.first?.mediaSourceId, "m")
+        XCTAssertEqual(fake.stopped.first?.isPaused, true)
         let after = await relaunched.pendingItems
         XCTAssertTrue(after.isEmpty)
         let reread = await ProgressSync(fileURL: file).pendingItems
@@ -264,14 +259,30 @@ final class ProgressSyncTests: XCTestCase {
         XCTAssertEqual(pending.map(\.positionTicks), [900])
     }
 
-    func testFinishedFlushesAsPlayed() async {
+    func testFinishedFlushesItsRealPosition() async {
         let fake = FakeTransport()
         let sync = ProgressSync(fileURL: file)
         await sync.record(itemId: "movie", positionTicks: 950, runTimeTicks: 1000)
+        let pending = await sync.pendingItems
+        XCTAssertEqual(pending.first?.finished, true)
         await sync.setTransport(fake)
         await sync.flush()
-        XCTAssertEqual(fake.saved.first?.1.played, true)
-        XCTAssertEqual(fake.saved.first?.1.playbackPositionTicks, 0)
+        // The server marks it watched by itself past 90%.
+        XCTAssertEqual(fake.stopped.first?.positionTicks, 950)
+    }
+
+    func testFlushSkipsTheItemPlayingNow() async {
+        let fake = FakeTransport()
+        fake.online = false
+        let sync = ProgressSync(fileURL: file)
+        await sync.setTransport(fake)
+        await sync.report(.progress, report(300), runTimeTicks: 1000)  // fails, stays pending
+        fake.online = true
+        await sync.flush()
+        XCTAssertTrue(fake.stopped.isEmpty, "a replayed stop would end the live session")
+        await sync.report(.stopped, report(320), runTimeTicks: 1000)
+        let pending = await sync.pendingItems
+        XCTAssertTrue(pending.isEmpty)
     }
 
     func testStartAtZeroIsNotRecorded() async {

@@ -5,7 +5,6 @@ public protocol ProgressTransport: Sendable {
     func reportStart(_ r: PlaybackReport) async throws
     func reportProgress(_ r: PlaybackReport) async throws
     func reportStopped(_ r: PlaybackReport) async throws
-    func saveUserData(itemId: String, update: UserDataUpdate) async throws
 }
 
 extension JellyfinAPI: ProgressTransport {}
@@ -13,6 +12,7 @@ extension JellyfinAPI: ProgressTransport {}
 /// A position not yet confirmed by the server.
 public struct PendingProgress: Codable, Equatable, Sendable {
     public var itemId: String
+    public var mediaSourceId: String?
     public var positionTicks: Int64
     public var runTimeTicks: Int64?
     public var recordedAt: Date
@@ -31,11 +31,19 @@ public enum ReportKind: Sendable {
 /// Keeps watch progress safe. Every position is written to disk first, then sent.
 /// A position leaves the disk only once the server has accepted it, so closing
 /// the app or losing the network never loses it: `flush()` sends what is left.
+///
+/// The flush replays a position as a "playback stopped" report. Tested against
+/// the user's Jellyfin 12 server: that updates Continue Watching even without a
+/// live session, while writing user data directly is refused (403) for
+/// non-admin users there.
 public actor ProgressSync {
     private let fileURL: URL
     private var transport: (any ProgressTransport)?
     private var pending: [String: PendingProgress] = [:]
     private var flushing = false
+    /// The item playing right now: its live session reports cover it, and a
+    /// replayed "stopped" would end that session on the server.
+    private var activeItemId: String?
 
     public init(fileURL: URL) {
         self.fileURL = fileURL
@@ -54,19 +62,23 @@ public actor ProgressSync {
     }
 
     /// Writes the position to disk. Never replaces a newer position with an older one.
-    public func record(itemId: String, positionTicks: Int64, runTimeTicks: Int64?, at date: Date = Date()) {
+    public func record(itemId: String, mediaSourceId: String? = nil, positionTicks: Int64,
+                       runTimeTicks: Int64?, at date: Date = Date()) {
         if let existing = pending[itemId], existing.recordedAt > date { return }
-        pending[itemId] = PendingProgress(itemId: itemId, positionTicks: positionTicks,
-                                          runTimeTicks: runTimeTicks, recordedAt: date)
+        pending[itemId] = PendingProgress(itemId: itemId, mediaSourceId: mediaSourceId,
+                                          positionTicks: positionTicks, runTimeTicks: runTimeTicks,
+                                          recordedAt: date)
         save()
     }
 
     /// Records, then sends a live session report. Returns true if the server got it.
     @discardableResult
     public func report(_ kind: ReportKind, _ r: PlaybackReport, runTimeTicks: Int64?, at date: Date = Date()) async -> Bool {
+        activeItemId = kind == .stopped ? nil : r.itemId
         // Nothing to save at the very start of an item that had no position.
         if !(kind == .start && r.positionTicks == 0) {
-            record(itemId: r.itemId, positionTicks: r.positionTicks, runTimeTicks: runTimeTicks, at: date)
+            record(itemId: r.itemId, mediaSourceId: r.mediaSourceId, positionTicks: r.positionTicks,
+                   runTimeTicks: runTimeTicks, at: date)
         }
         guard let transport else { return false }
         do {
@@ -82,18 +94,24 @@ public actor ProgressSync {
         }
     }
 
-    /// Sends everything left on disk, directly to the item's user data.
-    /// Safe to call often: it does nothing when there is nothing to send.
+    /// Sends everything left on disk. Safe to call often: it does nothing when
+    /// there is nothing to send.
     public func flush() async {
         guard let transport, !flushing, !pending.isEmpty else { return }
         flushing = true
         defer { flushing = false }
-        for p in pendingItems {
-            let update = p.finished
-                ? UserDataUpdate(playbackPositionTicks: 0, played: true, lastPlayedDate: Self.iso(p.recordedAt))
-                : UserDataUpdate(playbackPositionTicks: p.positionTicks, lastPlayedDate: Self.iso(p.recordedAt))
+        for p in pendingItems where p.itemId != activeItemId {
+            let replay = PlaybackReport(
+                itemId: p.itemId,
+                mediaSourceId: p.mediaSourceId,
+                playSessionId: "filmhub-replay-\(UUID().uuidString)",
+                positionTicks: p.positionTicks,
+                isPaused: true,
+                playMethod: "DirectPlay"
+            )
             do {
-                try await transport.saveUserData(itemId: p.itemId, update: update)
+                // Past 90% the server marks the item watched by itself.
+                try await transport.reportStopped(replay)
                 confirm(itemId: p.itemId, recordedAt: p.recordedAt)
             } catch {
                 return  // Offline or server down: try again on the next flush.
@@ -117,11 +135,5 @@ public actor ProgressSync {
         } catch {
             // Disk full or similar: the position stays in memory for this run.
         }
-    }
-
-    static func iso(_ date: Date) -> String {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return f.string(from: date)
     }
 }
