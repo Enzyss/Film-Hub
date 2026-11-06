@@ -68,12 +68,15 @@ struct PlayerView: View {
         case .preparing, .buffering, .reconnecting:
             VStack(spacing: Theme.Space.m) {
                 ProgressView().tint(.white).scaleEffect(1.4)
-                if model.phase == .reconnecting {
-                    Text("Riconnessione…")
-                        .font(.footnote)
-                        .foregroundStyle(.white)
-                }
+                Text(statusText(model))
+                    .font(.footnote)
+                    .foregroundStyle(.white)
+                    .multilineTextAlignment(.center)
+                    .animation(.default, value: model.openingMessage)
             }
+            .padding(Theme.Space.l)
+            .background(Theme.Colors.scrim)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
             .allowsHitTesting(false)
         case .failed(let message):
             VStack(spacing: Theme.Space.l) {
@@ -126,7 +129,7 @@ struct PlayerView: View {
                 }
                 Spacer()
                 if !model.routeLabel.isEmpty {
-                    Text(model.routeLabel)
+                    Text(routeBadge(model))
                         .font(.caption2.weight(.semibold))
                         .padding(.horizontal, Theme.Space.s)
                         .padding(.vertical, Theme.Space.xs)
@@ -207,6 +210,19 @@ struct PlayerView: View {
                 .contentShape(Circle())
         }
         .accessibilityLabel(label)
+    }
+
+    private func statusText(_ model: PlayerModel) -> String {
+        switch model.phase {
+        case .preparing: return model.openingMessage
+        case .reconnecting: return "Riconnessione…"
+        default: return "Caricamento…"
+        }
+    }
+
+    private func routeBadge(_ model: PlayerModel) -> String {
+        guard let s = model.openSeconds else { return model.routeLabel }
+        return "\(model.routeLabel) · " + String(format: "%.1f s", s)
     }
 
     private func isFailed(_ model: PlayerModel) -> Bool {

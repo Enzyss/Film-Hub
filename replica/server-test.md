@@ -43,3 +43,16 @@ script. Credenziali e token non sono salvati nel progetto.
    automatica quando la rete non basta (il server la consente).
 4. **HDR e Dolby Vision in MKV**: VLC 3 li mostra senza HDR vero. Alternativa da
    valutare: remux del server in HLS (copia senza ricodifica) verso il player Apple.
+
+## Apertura di un titolo nuovo (2026-11-06)
+
+Misurato a passaggi in sequenza su 6 MKV mai visti: PlaybackInfo 0,5 s, inizio
+file 1-1,5 s, indice in fondo al file ~2,4 s, primo buffer ~1 s → **3-5,6 s**.
+HLS del server (riserva): master + playlist + init + primo segmento ≈ **3,5 s**.
+`mediaSourceId` coincide con l'id del titolo in 100 file su 100.
+
+Cambi nell'app:
+- dopo 15 s senza immagine si passa da solo al modo successivo (prima 30 s);
+  dopo 6 s compare "Il server ci sta mettendo un po'…": mai schermo nero muto;
+- VLC con 1,5 s di buffer iniziale invece di 3 s, e riconnessione HTTP automatica;
+- il riquadro del player mostra il tempo di apertura (es. "VLC · 4,2 s").

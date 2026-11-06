@@ -23,6 +23,10 @@ final class PlayerModel {
     private(set) var duration: Double = 0
     private(set) var routeLabel = ""
     private(set) var engine: (any PlaybackEngine)?
+    /// What the user sees while the video opens. Never a silent black screen.
+    private(set) var openingMessage = "Apertura…"
+    /// Seconds from the tap to the first frame, shown next to the route label.
+    private(set) var openSeconds: Double?
 
     @ObservationIgnored private let api: JellyfinAPI
     @ObservationIgnored private let sync: ProgressSync
@@ -44,11 +48,17 @@ final class PlayerModel {
     @ObservationIgnored private var smoothSince = Date()
     @ObservationIgnored private var startedReported = false
     @ObservationIgnored private var closed = false
+    @ObservationIgnored private let tappedAt = Date()
+    @ObservationIgnored private var routeOpenedAt = Date()
 
     /// No progress for this long while trying to play = stalled (P1).
     static let stallTimeout: TimeInterval = 12
-    /// Opening a big file on a distant server can take longer.
-    static let openTimeout: TimeInterval = 30
+    /// Measured on the user's server: a new MKV opens in ~3-6 s, server HLS in
+    /// ~3.5 s. Past 15 s the route is not going to open: try the next one
+    /// instead of leaving a black screen.
+    static let openTimeout: TimeInterval = 15
+    /// After this long, tell the user we are still working on it.
+    static let slowOpenNotice: TimeInterval = 6
     static let reportInterval: TimeInterval = 10
     static let maxReloads = 3
 
@@ -136,9 +146,11 @@ final class PlayerModel {
         let newEngine: any PlaybackEngine = route.usesVLC ? VLCEngine() : AppleEngine()
         engine = newEngine
         routeLabel = route.label
+        openingMessage = routeIndex == 0 ? "Apertura…" : "Provo un altro modo (\(route.label))…"
         hasPlayedAnything = false
         lastSeenPosition = -1
         lastAdvanceAt = Date()
+        routeOpenedAt = Date()
         newEngine.load(url: route.url, startSeconds: seconds)
         if !wantsToPlay { newEngine.pause() }
     }
@@ -235,8 +247,15 @@ final class PlayerModel {
         let dur = engine.durationSeconds
         if dur > 0 { duration = dur } else if let rt = runTimeTicks, duration == 0 { duration = Ticks.toSeconds(rt) }
 
+        if !hasPlayedAnything, now.timeIntervalSince(routeOpenedAt) > Self.slowOpenNotice {
+            openingMessage = "Il server ci sta mettendo un po'…"
+        }
+
         if pos > 0, abs(pos - lastSeenPosition) > 0.2 {
-            if lastSeenPosition >= 0 { hasPlayedAnything = true }
+            if lastSeenPosition >= 0, !hasPlayedAnything {
+                hasPlayedAnything = true
+                if openSeconds == nil { openSeconds = now.timeIntervalSince(tappedAt) }
+            }
             lastSeenPosition = pos
             lastAdvanceAt = now
             position = pos

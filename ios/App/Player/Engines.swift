@@ -113,8 +113,11 @@ final class VLCEngine: PlaybackEngine {
 
     func load(url: URL, startSeconds: Double) {
         let media = VLCMedia(url: url)
-        // A bigger network buffer: fewer stalls on slow or distant servers (P1).
-        media.addOption(":network-caching=3000")
+        // 1.5 s of buffer before the first frame: starts sooner than VLC's usual
+        // 3 s; the server sends 66-90 Mbit/s, and the stall watchdog covers dips.
+        media.addOption(":network-caching=1500")
+        // Reopen the HTTP connection by itself if it drops mid-film (P1).
+        media.addOption(":http-reconnect")
         if startSeconds > 0 {
             media.addOption(":start-time=\(String(format: "%.1f", startSeconds))")
         }
