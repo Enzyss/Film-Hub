@@ -26,3 +26,5 @@ Note:
   è un bug dell'app: va detto all'utente.
 - Il percorso dell'avanzamento è: disco → server. Se l'app viene chiusa dal
   multitasking si perdono al massimo 10 secondi.
+- 2026-11-06: prima build su GitHub Actions riuscita (run 1): 23 test di
+  JellyCore verdi, MobileVLCKit 3.7.5 collegato, IPA da 16 MB.

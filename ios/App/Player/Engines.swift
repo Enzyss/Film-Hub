@@ -1,5 +1,5 @@
 import AVFoundation
-import MobileVLCKit
+@preconcurrency import MobileVLCKit
 import UIKit
 
 enum EngineStatus: Equatable {
