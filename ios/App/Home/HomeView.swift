@@ -4,9 +4,11 @@ import JellyCore
 struct HomeView: View {
     @Environment(AppModel.self) private var app
     @State private var model = HomeModel()
+    @State private var path = NavigationPath()
+    @State private var showSettings = false
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: Theme.Space.xxl) {
                     if let error = model.errorMessage {
@@ -27,9 +29,23 @@ struct HomeView: View {
             }
             .background(Theme.Colors.background)
             .navigationTitle("Home")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { showSettings = true } label: { Image(systemName: "gearshape.fill") }
+                        .accessibilityLabel("Impostazioni")
+                }
+            }
+            .sheet(isPresented: $showSettings) { SettingsView() }
             .refreshable { await reload() }
             .task(id: app.homeRefreshToken) { await reload() }
+            .withTitleDestinations()
         }
+    }
+
+    /// Episodes open their series' page.
+    private func titlePage(for item: BaseItem) -> BaseItem {
+        guard item.isEpisode, let sid = item.seriesId else { return item }
+        return BaseItem(id: sid, name: item.seriesName, type: "Series")
     }
 
     private func reload() async {
@@ -47,12 +63,19 @@ struct HomeView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(alignment: .top, spacing: Theme.Space.m) {
                         ForEach(items) { item in
+                            // A tap resumes at once (the core loop); hold for the title page.
                             Button {
-                                app.playing = item
+                                app.play(item)
                             } label: {
                                 LandscapeCard(item: item, api: app.api)
                             }
                             .buttonStyle(.plain)
+                            .contextMenu {
+                                Button { app.play(item) } label: { Label("Riprendi", systemImage: "play.fill") }
+                                Button { path.append(titlePage(for: item)) } label: {
+                                    Label(item.isEpisode ? "Vai alla serie" : "Dettagli", systemImage: "info.circle")
+                                }
+                            }
                         }
                     }
                     .padding(.horizontal, Theme.Space.l)

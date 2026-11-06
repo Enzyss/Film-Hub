@@ -90,7 +90,7 @@ public struct MediaSource: Codable, Hashable, Sendable {
     }
 }
 
-public struct PlaybackInfoResponse: Codable, Sendable {
+public struct PlaybackInfoResponse: Codable, Hashable, Sendable {
     public var mediaSources: [MediaSource]?
     public var playSessionId: String?
     public var errorCode: String?

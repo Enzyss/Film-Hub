@@ -22,8 +22,8 @@ struct RootView: View {
                 MainTabs()
             }
         }
-        .fullScreenCover(item: $app.playing, onDismiss: { app.playerDidClose() }) { item in
-            PlayerView(item: item)
+        .fullScreenCover(item: $app.playing, onDismiss: { app.playerDidClose() }) { request in
+            PlayerView(request: request)
         }
     }
 }
@@ -33,14 +33,14 @@ struct MainTabs: View {
         TabView {
             HomeView()
                 .tabItem { Label("Home", systemImage: "house.fill") }
-            ComingSoonView(title: "Librerie", icon: "square.grid.2x2.fill",
-                           text: "Film e serie del server, sfogliabili per libreria. Arrivano nel prossimo aggiornamento.")
-                .tabItem { Label("Librerie", systemImage: "square.grid.2x2.fill") }
-            ComingSoonView(title: "Cerca", icon: "magnifyingglass",
-                           text: "La ricerca in tutta la libreria arriva nel prossimo aggiornamento.")
+            BrowseView(kind: .movies)
+                .tabItem { Label("Film", systemImage: "film.fill") }
+            BrowseView(kind: .series)
+                .tabItem { Label("Serie TV", systemImage: "tv.fill") }
+            BrowseView(kind: .documentaries)
+                .tabItem { Label("Documentari", systemImage: "globe.europe.africa.fill") }
+            SearchView()
                 .tabItem { Label("Cerca", systemImage: "magnifyingglass") }
-            SettingsView()
-                .tabItem { Label("Impostazioni", systemImage: "gearshape.fill") }
         }
         .tint(Theme.Colors.accent)
     }
@@ -72,6 +72,7 @@ struct ComingSoonView: View {
 
 struct SettingsView: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.dismiss) private var dismiss
     @State private var pendingCount = 0
 
     var body: some View {
@@ -82,6 +83,18 @@ struct SettingsView: View {
                     LabeledContent("Utente", value: app.account?.userName ?? "")
                     LabeledContent("Server", value: app.account?.serverName ?? "")
                     LabeledContent("Indirizzo", value: app.account?.serverURL.absoluteString ?? "")
+                }
+                Section {
+                    Picker("Audio", selection: $app.audioPreference) {
+                        ForEach(AudioPreference.allCases, id: \.self) { Text($0.label).tag($0) }
+                    }
+                    Picker("Sottotitoli", selection: $app.subtitlePreference) {
+                        ForEach(SubtitlePreference.allCases, id: \.self) { Text($0.label).tag($0) }
+                    }
+                } header: {
+                    Text("Lingua")
+                } footer: {
+                    Text("Usate quando premi Riproduci. Con i sottotitoli spenti compaiono comunque quelli \"forzati\" (dialoghi in altre lingue). Nella scheda del film puoi scegliere tracce diverse.")
                 }
                 Section {
                     Picker("Player", selection: $app.playerPreference) {
@@ -114,6 +127,12 @@ struct SettingsView: View {
             .scrollContentBackground(.hidden)
             .background(Theme.Colors.background)
             .navigationTitle("Impostazioni")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Fine") { dismiss() }
+                }
+            }
             .task { pendingCount = await app.progress.pendingItems.count }
         }
     }

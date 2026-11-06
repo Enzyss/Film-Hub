@@ -3,7 +3,8 @@ import JellyCore
 
 /// S08: full-screen player. Same controls whichever engine is playing.
 struct PlayerView: View {
-    let item: BaseItem
+    let request: PlayRequest
+    private var item: BaseItem { request.item }
 
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
@@ -42,7 +43,8 @@ struct PlayerView: View {
         .persistentSystemOverlays(.hidden)
         .task {
             guard model == nil, let api = app.api else { return }
-            let m = PlayerModel(item: item, api: api, sync: app.progress, preference: app.playerPreference)
+            let m = PlayerModel(request: request, api: api, sync: app.progress, preference: app.playerPreference,
+                                audio: app.audioPreference, subtitles: app.subtitlePreference)
             model = m
             UIApplication.shared.isIdleTimerDisabled = true
             scheduleHide()
@@ -128,6 +130,9 @@ struct PlayerView: View {
                     }
                 }
                 Spacer()
+                if !model.audioOptions.isEmpty || !model.subtitleOptions.isEmpty {
+                    tracksMenu(model)
+                }
                 if !model.routeLabel.isEmpty {
                     Text(routeBadge(model))
                         .font(.caption2.weight(.semibold))
@@ -210,6 +215,35 @@ struct PlayerView: View {
                 .contentShape(Circle())
         }
         .accessibilityLabel(label)
+    }
+
+    private func tracksMenu(_ model: PlayerModel) -> some View {
+        Menu {
+            if model.audioOptions.count > 1 {
+                Section("Audio") {
+                    ForEach(model.audioOptions) { t in
+                        Button { model.selectAudio(t.id) } label: {
+                            if t.id == model.currentAudio { Label(t.name, systemImage: "checkmark") } else { Text(t.name) }
+                        }
+                    }
+                }
+            }
+            Section("Sottotitoli") {
+                Button { model.selectSubtitle(nil) } label: {
+                    if model.currentSubtitle == nil { Label("Nessuno", systemImage: "checkmark") } else { Text("Nessuno") }
+                }
+                ForEach(model.subtitleOptions) { t in
+                    Button { model.selectSubtitle(t.id) } label: {
+                        if t.id == model.currentSubtitle { Label(t.name, systemImage: "checkmark") } else { Text(t.name) }
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "captions.bubble")
+                .font(.title3.weight(.semibold))
+                .frame(width: Theme.Size.playerButton, height: Theme.Size.playerButton)
+        }
+        .accessibilityLabel("Audio e sottotitoli")
     }
 
     private func statusText(_ model: PlayerModel) -> String {

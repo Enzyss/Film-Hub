@@ -22,11 +22,17 @@ final class AppModel {
     /// Bumped whenever home should reload (foreground, player closed, login).
     private(set) var homeRefreshToken = 0
 
-    /// The item open in the full-screen player, if any.
-    var playing: BaseItem?
+    /// What the full-screen player is showing, if anything.
+    var playing: PlayRequest?
 
     var playerPreference: PlayerPreference {
         didSet { Prefs.playerPreference = playerPreference.rawValue }
+    }
+    var audioPreference: AudioPreference {
+        didSet { Prefs.audioPreference = audioPreference.rawValue }
+    }
+    var subtitlePreference: SubtitlePreference {
+        didSet { Prefs.subtitlePreference = subtitlePreference.rawValue }
     }
 
     let progress = ProgressSync(fileURL: AppPaths.pendingProgress)
@@ -34,6 +40,15 @@ final class AppModel {
 
     init() {
         playerPreference = Prefs.playerPreference.flatMap(PlayerPreference.init(rawValue:)) ?? .automatic
+        audioPreference = Prefs.audioPreference.flatMap(AudioPreference.init(rawValue:)) ?? .italian
+        subtitlePreference = Prefs.subtitlePreference.flatMap(SubtitlePreference.init(rawValue:)) ?? .off
+    }
+
+    /// Opens the player. `choice` and `source` come from the title page; from
+    /// a home card they are worked out from the language preferences.
+    func play(_ item: BaseItem, source: MediaSource? = nil, choice: TrackChoice? = nil,
+              prefetched: PlayRequest.Prefetched? = nil) {
+        playing = PlayRequest(item: item, source: source, choice: choice, prefetched: prefetched)
     }
 
     static var clientInfo: ClientInfo {

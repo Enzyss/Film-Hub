@@ -27,7 +27,7 @@ public struct CatalogQuery: Codable, Hashable, Sendable {
 
     /// Fields for cards: enough for poster, rating, progress and de-duplication.
     /// Never MediaSources: on the user's server that makes a 25-item page take 4.5 s.
-    public static let cardFields = "ProviderIds,PrimaryImageAspectRatio,ChildCount"
+    public static let cardFields = "ProviderIds,PrimaryImageAspectRatio,ChildCount,Genres"
 
     public func queryItems(userId: String, startIndex: Int, limit: Int) -> [URLQueryItem] {
         var q: [URLQueryItem] = [

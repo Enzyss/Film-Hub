@@ -102,4 +102,25 @@ enum Prefs {
         get { d.string(forKey: "playerPreference") }
         set { d.set(newValue, forKey: "playerPreference") }
     }
+
+    static var audioPreference: String? {
+        get { d.string(forKey: "audioPreference") }
+        set { d.set(newValue, forKey: "audioPreference") }
+    }
+
+    static var subtitlePreference: String? {
+        get { d.string(forKey: "subtitlePreference") }
+        set { d.set(newValue, forKey: "subtitlePreference") }
+    }
+
+    static var recentSearches: [String] {
+        get { d.stringArray(forKey: "recentSearches") ?? [] }
+        set { d.set(Array(newValue.prefix(10)), forKey: "recentSearches") }
+    }
+}
+
+enum CachePaths {
+    static func catalog(_ kind: String) -> URL {
+        AppPaths.support.appendingPathComponent("catalog-\(kind).json")
+    }
 }

@@ -30,6 +30,10 @@ enum Theme {
 
     enum Size {
         static let landscapeCardWidth: CGFloat = 260
+        static let posterWidth: CGFloat = 118
+        static let gridPosterMin: CGFloat = 104
+        static let heroHeight: CGFloat = 440
+        static let castPhoto: CGFloat = 72
         static let progressHeight: CGFloat = 4
         static let playerButton: CGFloat = 44
         static let playerMainButton: CGFloat = 64

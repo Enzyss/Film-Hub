@@ -28,9 +28,20 @@ final class PlayerModel {
     /// Seconds from the tap to the first frame, shown next to the route label.
     private(set) var openSeconds: Double?
 
+    // In-player audio and subtitle menu, as the engine names the tracks.
+    private(set) var audioOptions: [EngineTrack] = []
+    private(set) var subtitleOptions: [EngineTrack] = []
+    private(set) var currentAudio: Int?
+    private(set) var currentSubtitle: Int?
+
     @ObservationIgnored private let api: JellyfinAPI
     @ObservationIgnored private let sync: ProgressSync
     @ObservationIgnored private let preference: PlayerPreference
+    @ObservationIgnored private let request: PlayRequest
+    @ObservationIgnored private let audioPreference: AudioPreference
+    @ObservationIgnored private let subtitlePreference: SubtitlePreference
+    @ObservationIgnored private var startTracks: StartTracks = .none
+    @ObservationIgnored private var lastTrackRefresh = Date.distantPast
 
     @ObservationIgnored private var routes: [PlaybackRoute] = []
     @ObservationIgnored private var routeIndex = 0
@@ -62,12 +73,16 @@ final class PlayerModel {
     static let reportInterval: TimeInterval = 10
     static let maxReloads = 3
 
-    init(item: BaseItem, api: JellyfinAPI, sync: ProgressSync, preference: PlayerPreference) {
-        self.item = item
+    init(request: PlayRequest, api: JellyfinAPI, sync: ProgressSync, preference: PlayerPreference,
+         audio: AudioPreference, subtitles: SubtitlePreference) {
+        self.request = request
+        self.item = request.item
         self.api = api
         self.sync = sync
         self.preference = preference
-        self.runTimeTicks = item.runTimeTicks
+        self.audioPreference = audio
+        self.subtitlePreference = subtitles
+        self.runTimeTicks = request.item.runTimeTicks
     }
 
     var isPlaying: Bool { phase == .playing || phase == .buffering }
@@ -101,9 +116,16 @@ final class PlayerModel {
 
     private func prepareRoutes(startSeconds: Double) async throws {
         var source: MediaSource?
+        let wantedSource = request.source?.id
         do {
-            let info = try await api.playbackInfo(itemId: item.id, startTicks: Ticks.fromSeconds(startSeconds))
-            source = info.mediaSources?.first
+            let info: PlaybackInfoResponse
+            if let pre = request.prefetched, pre.matches(choice: request.choice, mediaSourceId: wantedSource) {
+                info = pre.info  // fetched while the title page was open
+            } else {
+                info = try await api.playbackInfo(itemId: item.id, startTicks: Ticks.fromSeconds(startSeconds),
+                                                  mediaSourceId: wantedSource, choice: request.choice)
+            }
+            source = info.mediaSources?.first { $0.id == wantedSource } ?? info.mediaSources?.first
             playSessionId = info.playSessionId
         } catch JellyfinError.unauthorized {
             throw JellyfinError.unauthorized
@@ -119,6 +141,10 @@ final class PlayerModel {
         mediaSourceId = source.id
         if let rt = source.runTimeTicks, rt > 0 { runTimeTicks = rt }
 
+        let choice = request.choice
+            ?? Tracks.defaultChoice(for: source, audio: audioPreference, subtitles: subtitlePreference)
+        startTracks = makeStartTracks(choice: choice, source: source)
+
         let compatible = PlaybackDecider.isAppleCompatible(source)
         guard let staticURL = api.staticStreamURL(itemId: item.id, mediaSourceId: source.id,
                                                   playSessionId: playSessionId),
@@ -132,8 +158,30 @@ final class PlayerModel {
             appleStaticURL: appleURL,
             staticURL: staticURL,
             transcodeURL: api.transcodeURL(source.transcodingUrl),
-            preference: preference
+            preference: preference,
+            needsTrackControl: Tracks.needsTrackControl(choice, source: source)
         )
+    }
+
+    /// Jellyfin stream numbers -> what VLC needs at start.
+    private func makeStartTracks(choice: TrackChoice, source: MediaSource) -> StartTracks {
+        var t = StartTracks()
+        let audio = Tracks.audio(source)
+        if choice.audioIndex != source.defaultAudioStream?.index {
+            t.audioPosition = Tracks.vlcPosition(of: choice.audioIndex, in: audio)
+        }
+        let subs = Tracks.subtitles(source)
+        if let idx = choice.subtitleIndex, let stream = subs.first(where: { $0.index == idx }) {
+            if stream.isExternal == true, let msid = source.id {
+                let format = (stream.codec ?? "").lowercased() == "ass" ? "ass" : "srt"
+                t.externalSubtitle = api.subtitleURL(itemId: item.id, mediaSourceId: msid, index: idx, format: format)
+            } else {
+                t.subtitlePosition = Tracks.vlcPosition(of: idx, in: subs)
+            }
+        } else {
+            t.subtitlesOff = true
+        }
+        return t
     }
 
     private func open(at seconds: Double) {
@@ -151,7 +199,7 @@ final class PlayerModel {
         lastSeenPosition = -1
         lastAdvanceAt = Date()
         routeOpenedAt = Date()
-        newEngine.load(url: route.url, startSeconds: seconds)
+        newEngine.load(url: route.url, startSeconds: seconds, tracks: route.usesVLC ? startTracks : .none)
         if !wantsToPlay { newEngine.pause() }
     }
 
@@ -181,6 +229,27 @@ final class PlayerModel {
     }
 
     func skip(_ delta: Double) { seek(to: position + delta) }
+
+    func selectAudio(_ id: Int) {
+        engine?.selectAudio(id)
+        currentAudio = id
+    }
+
+    func selectSubtitle(_ id: Int?) {
+        engine?.selectSubtitle(id)
+        currentSubtitle = id
+    }
+
+    private func refreshTracks(force: Bool = false) {
+        guard let engine, force || Date().timeIntervalSince(lastTrackRefresh) > 2 else { return }
+        lastTrackRefresh = Date()
+        let a = engine.audioTracks, s = engine.subtitleTracks
+        if a != audioOptions { audioOptions = a }
+        if s != subtitleOptions { subtitleOptions = s }
+        let ca = engine.currentAudio, cs = engine.currentSubtitle
+        if ca != currentAudio { currentAudio = ca }
+        if cs != currentSubtitle { currentSubtitle = cs }
+    }
 
     func retry() {
         reloadsInARow = 0
@@ -323,6 +392,8 @@ final class PlayerModel {
         default:
             break
         }
+
+        if hasPlayedAnything { refreshTracks() }
 
         if hasPlayedAnything, now.timeIntervalSince(lastReportAt) >= Self.reportInterval {
             report(.progress)
