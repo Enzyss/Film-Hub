@@ -4,29 +4,29 @@ Accesso con utente e password,onboarding,must,yes,yes,token salvato nel Keychain
 Restare collegati tra un avvio e l'altro,onboarding,must,yes,yes,token nel Keychain
 Home: Continua a guardare con barra di avanzamento,home,must,yes,yes,P2: deve essere sempre aggiornata
 Home: Prossimi episodi,home,must,yes,yes,
-Home: Aggiunti di recente per libreria,home,must,yes,no,
+Home: Aggiunti di recente per libreria,home,must,yes,yes,"nelle tab Film, Serie TV e Documentari"
 Home ricaricata quando l'app torna in primo piano,home,must,partial,yes,più cache della home all'avvio
-Elenco librerie,librerie,must,yes,no,
-Griglia di film o serie con scorrimento infinito,librerie,must,yes,no,
-Scheda film con Riproduci o Riprendi da,dettaglio,must,yes,no,P3: apertura veloce
-Scheda serie con stagioni ed episodi,dettaglio,must,yes,no,
+Elenco librerie,librerie,must,yes,yes,"tab Film / Serie TV / Documentari al posto delle librerie: su questo server sono 19, con doppioni HD/4K"
+Griglia di film o serie con scorrimento infinito,librerie,must,yes,yes,"Vedi tutto: pagine da 60, ordina, solo non visti"
+Scheda film con Riproduci o Riprendi da,dettaglio,must,yes,yes,PlaybackInfo preparato mentre leggi la scheda; versioni HD/4K
+Scheda serie con stagioni ed episodi,dettaglio,must,yes,yes,apre sulla stagione del prossimo episodio
 Riproduzione con scelta automatica diretta o transcodifica,player,must,yes,yes,Apple → VLC → HLS del server
 Riprendere dalla posizione salvata,player,must,yes,yes,
 Invio periodico dell'avanzamento al server,player,must,partial,yes,ogni 10 s e a ogni pausa o seek
 Avanzamento salvato quando l'app va in background o viene chiusa,player,must,partial,yes,coda su disco + background task
 Coda locale degli invii falliti con nuovi tentativi,player,must,partial,yes,"flush all'avvio, in primo piano e al ritorno della rete"
 Recupero automatico dagli stalli di rete,player,must,partial,yes,"riapre dalla stessa posizione, massimo 3 volte"
-Scelta della traccia audio,player,must,yes,no,
-Scelta dei sottotitoli,player,must,yes,no,
-Ricerca,ricerca,must,yes,no,
+Scelta della traccia audio,player,must,yes,yes,nella scheda e durante la visione
+Scelta dei sottotitoli,player,must,yes,yes,nella scheda e durante la visione; esterni caricati in VLC
+Ricerca,ricerca,must,yes,yes,"mentre scrivi, divisa in film/serie/documentari, ricerche recenti"
 Prossimo episodio automatico con countdown,player,should,yes,no,
 Salta intro e titoli di coda,player,should,yes,no,se il server fornisce i segmenti
 Picture in Picture,player,should,yes,no,
 Riproduzione in background dell'audio,player,should,yes,no,
-Segna come visto o non visto,dettaglio,should,yes,no,
+Segna come visto o non visto,dettaglio,should,yes,yes,
 Accesso con Quick Connect,onboarding,should,yes,no,
 Impostazione qualità massima di streaming,impostazioni,should,yes,no,
-Lingua predefinita di audio e sottotitoli,impostazioni,should,yes,no,
+Lingua predefinita di audio e sottotitoli,impostazioni,should,yes,yes,sottotitoli forzati mostrati anche se spenti
 Cache delle immagini su disco,prestazioni,should,yes,no,P3
 Anteprime durante lo scorrimento (trickplay),player,should,yes,no,
 Preferiti,dettaglio,could,yes,no,
@@ -35,6 +35,11 @@ Più server o più utenti,onboarding,could,unknown,no,
 Header di autenticazione personalizzati,onboarding,could,yes,no,per server dietro Cloudflare Access e simili
 Download per la visione offline,download,could,yes,no,secondo progetto
 Chromecast,cast,could,yes,no,secondo progetto
+"Sezioni per piattaforma (Netflix, Disney+, Prime Video...)",catalogo,should,no,yes,dagli studi nei metadati del server
+Sezioni per genere,catalogo,should,no,yes,nomi italiani e inglesi uniti; uscite recenti con voto 6.5+
+Punteggi del pubblico e della critica,catalogo,should,partial,yes,CommunityRating e CriticRating del server
+Titoli simili,dettaglio,should,unknown,yes,
+Stasera cosa guardo,catalogo,could,no,no,in parte: riga Da non perdere
 Integrazione Seerr,richieste,could,yes,skip,servizio esterno fuori dal nucleo
 Vista sessioni del server,amministrazione,could,yes,skip,funzione da amministratore
 Musica,musica,could,no,skip,esclusa anche nell'originale
