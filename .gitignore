@@ -1,0 +1,12 @@
+.DS_Store
+# Generated in CI
+ios/FilmHub.xcodeproj/
+ios/FilmHub.xcworkspace/
+ios/App/Info.plist
+ios/Pods/
+ios/Podfile.lock
+ios/build/
+ios/JellyCore/.build/
+ios/JellyCore/.swiftpm/
+xcuserdata/
+DerivedData/
