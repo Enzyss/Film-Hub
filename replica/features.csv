@@ -1,0 +1,42 @@
+feature,area,priority,original,clone,notes
+Collegarsi a un server inserendo l'URL,onboarding,must,yes,no,verifica con /System/Info/Public
+Accesso con utente e password,onboarding,must,yes,no,token salvato nel Keychain
+Restare collegati tra un avvio e l'altro,onboarding,must,yes,no,
+Home: Continua a guardare con barra di avanzamento,home,must,yes,no,P2: deve essere sempre aggiornata
+Home: Prossimi episodi,home,must,yes,no,
+Home: Aggiunti di recente per libreria,home,must,yes,no,
+Home ricaricata quando l'app torna in primo piano,home,must,partial,no,P2
+Elenco librerie,librerie,must,yes,no,
+Griglia di film o serie con scorrimento infinito,librerie,must,yes,no,
+Scheda film con Riproduci o Riprendi da,dettaglio,must,yes,no,P3: apertura veloce
+Scheda serie con stagioni ed episodi,dettaglio,must,yes,no,
+Riproduzione con scelta automatica diretta o transcodifica,player,must,yes,no,P3
+Riprendere dalla posizione salvata,player,must,yes,no,
+Invio periodico dell'avanzamento al server,player,must,partial,no,P2: ogni 10 s e a ogni pausa
+Avanzamento salvato quando l'app va in background o viene chiusa,player,must,partial,no,P2
+Coda locale degli invii falliti con nuovi tentativi,player,must,partial,no,P2 (cfr. issue #2438)
+Recupero automatico dagli stalli di rete,player,must,partial,no,P1
+Scelta della traccia audio,player,must,yes,no,
+Scelta dei sottotitoli,player,must,yes,no,
+Ricerca,ricerca,must,yes,no,
+Prossimo episodio automatico con countdown,player,should,yes,no,
+Salta intro e titoli di coda,player,should,yes,no,se il server fornisce i segmenti
+Picture in Picture,player,should,yes,no,
+Riproduzione in background dell'audio,player,should,yes,no,
+Segna come visto o non visto,dettaglio,should,yes,no,
+Accesso con Quick Connect,onboarding,should,yes,no,
+Impostazione qualità massima di streaming,impostazioni,should,yes,no,
+Lingua predefinita di audio e sottotitoli,impostazioni,should,yes,no,
+Cache delle immagini su disco,prestazioni,should,yes,no,P3
+Anteprime durante lo scorrimento (trickplay),player,should,yes,no,
+Preferiti,dettaglio,could,yes,no,
+Ordinamento e filtri della libreria,librerie,could,yes,no,
+Più server o più utenti,onboarding,could,unknown,no,
+Header di autenticazione personalizzati,onboarding,could,yes,no,per server dietro Cloudflare Access e simili
+Download per la visione offline,download,could,yes,no,secondo progetto
+Chromecast,cast,could,yes,no,secondo progetto
+Integrazione Seerr,richieste,could,yes,skip,servizio esterno fuori dal nucleo
+Vista sessioni del server,amministrazione,could,yes,skip,funzione da amministratore
+Musica,musica,could,no,skip,esclusa anche nell'originale
+Plugin server per impostazioni condivise,server,could,yes,skip,richiede un plugin lato server
+Catalogo di film e serie,contenuti,could,yes,skip,appartiene al server dell'utente: l'app lo mostra soltanto
