@@ -84,8 +84,12 @@ public enum PlaybackDecider {
         appleStaticURL: URL,
         staticURL: URL,
         transcodeURL: URL?,
-        preference: PlayerPreference
+        preference: PlayerPreference,
+        needsTrackControl: Bool = false
     ) -> [PlaybackRoute] {
+        // A non-default audio track or any subtitle: VLC picks and loads them
+        // reliably on direct play; the Apple player cannot load external files.
+        let appleCompatible = appleCompatible && !needsTrackControl
         var routes: [PlaybackRoute] = []
         switch preference {
         case .automatic:

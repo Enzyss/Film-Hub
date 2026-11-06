@@ -83,6 +83,9 @@ public struct PlaybackInfoRequest: Encodable, Sendable {
     public var startTimeTicks: Int64?
     public var mediaSourceId: String?
     public var maxStreamingBitrate: Int
+    public var audioStreamIndex: Int?
+    /// -1 = no subtitles in the server's conversion.
+    public var subtitleStreamIndex: Int?
     public var enableDirectPlay = true
     public var enableDirectStream = true
     public var enableTranscoding = true

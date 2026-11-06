@@ -256,16 +256,126 @@ public struct JellyfinAPI: Sendable {
         return try await get(BaseItem.self, "/Items/\(id)", [URLQueryItem(name: "userId", value: uid)])
     }
 
+    // MARK: Catalog
+
+    public func items(_ query: CatalogQuery, startIndex: Int = 0, limit: Int = 24) async throws -> [BaseItem] {
+        let uid = try requireUser()
+        return try await get(QueryResult<BaseItem>.self, "/Items",
+                             query.queryItems(userId: uid, startIndex: startIndex, limit: limit)).items ?? []
+    }
+
+    static let detailFields = "Overview,Genres,People,Studios,ProviderIds,Taglines,ChildCount,MediaSources,PrimaryImageAspectRatio"
+
+    /// Everything the title page shows, in one call (~0.5 s on the user's server).
+    public func detail(id: String) async throws -> BaseItem {
+        let uid = try requireUser()
+        return try await get(BaseItem.self, "/Items/\(id)", [
+            URLQueryItem(name: "userId", value: uid),
+            URLQueryItem(name: "fields", value: Self.detailFields),
+        ])
+    }
+
+    public func seasons(seriesId: String) async throws -> [BaseItem] {
+        let uid = try requireUser()
+        return try await get(QueryResult<BaseItem>.self, "/Shows/\(seriesId)/Seasons", [
+            URLQueryItem(name: "userId", value: uid),
+            URLQueryItem(name: "enableUserData", value: "true"),
+            URLQueryItem(name: "fields", value: "ChildCount"),
+        ]).items ?? []
+    }
+
+    public func episodes(seriesId: String, seasonId: String) async throws -> [BaseItem] {
+        let uid = try requireUser()
+        return try await get(QueryResult<BaseItem>.self, "/Shows/\(seriesId)/Episodes", [
+            URLQueryItem(name: "userId", value: uid),
+            URLQueryItem(name: "seasonId", value: seasonId),
+            URLQueryItem(name: "fields", value: "Overview,PrimaryImageAspectRatio"),
+            URLQueryItem(name: "enableUserData", value: "true"),
+            URLQueryItem(name: "imageTypeLimit", value: "1"),
+            URLQueryItem(name: "enableImageTypes", value: "Primary,Thumb"),
+        ]).items ?? []
+    }
+
+    /// The next episode to watch in one series.
+    public func nextUp(seriesId: String) async throws -> BaseItem? {
+        let uid = try requireUser()
+        return try await get(QueryResult<BaseItem>.self, "/Shows/NextUp", [
+            URLQueryItem(name: "userId", value: uid),
+            URLQueryItem(name: "seriesId", value: seriesId),
+            URLQueryItem(name: "limit", value: "1"),
+            URLQueryItem(name: "enableResumable", value: "true"),
+            URLQueryItem(name: "enableUserData", value: "true"),
+        ]).items?.first
+    }
+
+    public func similar(id: String, limit: Int = 16) async throws -> [BaseItem] {
+        let uid = try requireUser()
+        let items = try await get(QueryResult<BaseItem>.self, "/Items/\(id)/Similar", [
+            URLQueryItem(name: "userId", value: uid),
+            URLQueryItem(name: "limit", value: String(limit)),
+            URLQueryItem(name: "fields", value: CatalogQuery.cardFields),
+        ]).items ?? []
+        return items.filter { $0.id != id }.deduplicated()
+    }
+
+    /// Other copies of the same film in other libraries (HD, 4K...).
+    public func versions(of item: BaseItem) async throws -> [BaseItem] {
+        guard item.isMovie, let name = item.name, !name.isEmpty else { return [item] }
+        let uid = try requireUser()
+        var q: [URLQueryItem] = [
+            URLQueryItem(name: "userId", value: uid),
+            URLQueryItem(name: "recursive", value: "true"),
+            URLQueryItem(name: "includeItemTypes", value: "Movie"),
+            URLQueryItem(name: "searchTerm", value: name),
+            URLQueryItem(name: "limit", value: "12"),
+            URLQueryItem(name: "fields", value: "ProviderIds,MediaSources"),
+            URLQueryItem(name: "enableUserData", value: "true"),
+        ]
+        if let y = item.productionYear { q.append(URLQueryItem(name: "years", value: String(y))) }
+        let found = try await get(QueryResult<BaseItem>.self, "/Items", q).items ?? []
+        let same = found.filter { $0.dedupeKey == item.dedupeKey }
+        return same.isEmpty ? [item] : same
+    }
+
+    /// Title search across films and series (~0.8 s on the user's server).
+    public func search(_ term: String, limit: Int = 40) async throws -> [BaseItem] {
+        try await items(CatalogQuery(itemTypes: ["Movie", "Series"], sortBy: "SortName", descending: false,
+                                     searchTerm: term), limit: limit).deduplicated()
+    }
+
+    public func markPlayed(itemId: String, played: Bool) async throws {
+        let uid = try requireUser()
+        _ = try await send(played ? "POST" : "DELETE", "/UserPlayedItems/\(itemId)",
+                           query: [URLQueryItem(name: "userId", value: uid)])
+    }
+
+    /// An external or text subtitle as a file VLC can load.
+    public func subtitleURL(itemId: String, mediaSourceId: String, index: Int, format: String = "srt") -> URL? {
+        url("/Videos/\(itemId)/\(mediaSourceId)/Subtitles/\(index)/0/Stream.\(format)", [
+            URLQueryItem(name: "api_key", value: token),
+        ])
+    }
+
+    public func personImageURL(_ person: Person, width: Int) -> URL? {
+        guard let tag = person.primaryImageTag else { return nil }
+        return imageURL(itemId: person.id, type: "Primary", tag: tag, width: width)
+    }
+
+    // MARK: Playback
+
     public func playbackInfo(itemId: String, startTicks: Int64?, mediaSourceId: String? = nil,
+                             choice: TrackChoice? = nil,
                              maxBitrate: Int = 120_000_000) async throws -> PlaybackInfoResponse {
         let uid = try requireUser()
-        let body = PlaybackInfoRequest(
+        var body = PlaybackInfoRequest(
             userId: uid,
             deviceProfile: .apple(maxBitrate: maxBitrate),
             startTimeTicks: startTicks,
             mediaSourceId: mediaSourceId,
             maxStreamingBitrate: maxBitrate
         )
+        body.audioStreamIndex = choice?.audioIndex
+        body.subtitleStreamIndex = choice?.subtitleIndex ?? (choice == nil ? nil : -1)
         let data = try await send("POST", "/Items/\(itemId)/PlaybackInfo",
                                   query: [URLQueryItem(name: "userId", value: uid)], body: body)
         return try decode(PlaybackInfoResponse.self, data)

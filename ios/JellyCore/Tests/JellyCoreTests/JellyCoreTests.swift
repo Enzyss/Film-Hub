@@ -292,3 +292,100 @@ final class ProgressSyncTests: XCTestCase {
         XCTAssertTrue(pending.isEmpty)
     }
 }
+
+final class CatalogTests: XCTestCase {
+    func value(_ items: [URLQueryItem], _ name: String) -> String? {
+        items.first { $0.name == name }?.value
+    }
+
+    func testQueryItems() {
+        let q = CatalogQuery(itemTypes: ["Movie"], genres: ["Commedia", "Comedy"], studios: ["Netflix"],
+                             sortBy: "Random", unplayedOnly: true, minCommunityRating: 7)
+        let items = q.queryItems(userId: "u", startIndex: 24, limit: 24)
+        XCTAssertEqual(value(items, "genres"), "Commedia|Comedy")
+        XCTAssertEqual(value(items, "studios"), "Netflix")
+        XCTAssertEqual(value(items, "isPlayed"), "false")
+        XCTAssertEqual(value(items, "startIndex"), "24")
+        XCTAssertEqual(value(items, "recursive"), "true")
+        XCTAssertFalse(value(items, "fields")!.contains("MediaSources"))
+    }
+
+    func testRowsPerTab() {
+        let movies = Catalog.rows(for: .movies)
+        XCTAssertEqual(movies.first?.title, "Aggiunti di recente")
+        XCTAssertTrue(movies.contains { $0.title == "Netflix" })
+        XCTAssertTrue(movies.contains { $0.title == "Commedia" })
+        XCTAssertEqual(Set(movies.map(\.id)).count, movies.count, "row ids must be unique")
+        let docs = Catalog.rows(for: .documentaries)
+        XCTAssertTrue(docs.allSatisfy { !$0.query.itemTypes.isEmpty })
+        let series = Catalog.rows(for: .series)
+        XCTAssertTrue(series.allSatisfy { $0.query.itemTypes == ["Series"] })
+    }
+
+    func testDeduplicatesHDAnd4K() throws {
+        let json = """
+        [{"Id":"a","Name":"Matrix","Type":"Movie","ProductionYear":1999,"ProviderIds":{"Tmdb":"603"}},
+         {"Id":"b","Name":"Matrix","Type":"Movie","ProductionYear":1999,"ProviderIds":{"Tmdb":"603"}},
+         {"Id":"c","Name":"Matrix Reloaded","Type":"Movie","ProductionYear":2003,"ProviderIds":{"Tmdb":"604"}},
+         {"Id":"d","Name":"Senza id","Type":"Movie","ProductionYear":2001},
+         {"Id":"e","Name":"senza ID","Type":"Movie","ProductionYear":2001}]
+        """.data(using: .utf8)!
+        let items = try JellyfinCoding.decoder().decode([BaseItem].self, from: json)
+        XCTAssertEqual(items[0].providerId("Tmdb"), "603")
+        XCTAssertEqual(items.deduplicated().map(\.id), ["a", "c", "d"])
+    }
+
+    func testLabels() throws {
+        let json = #"{"Id":"s","Type":"Series","ProductionYear":2008,"ChildCount":5,"CommunityRating":8.94,"CriticRating":96}"#
+        let item = try JellyfinCoding.decoder().decode(BaseItem.self, from: json.data(using: .utf8)!)
+        XCTAssertEqual(item.metaLine, "2008 · 5 stagioni")
+        XCTAssertEqual(item.ratingLabel, "★ 8.9")
+        XCTAssertEqual(item.criticLabel, "96%")
+    }
+}
+
+final class TracksTests: XCTestCase {
+    // Like "Matrix" on the user's server: video 0, (1 other), audio eng 2 / ita 3,
+    // subtitles eng PGS 4, ita srt 5 (forced), ita srt 6.
+    let source = MediaSource(id: "m", container: "mkv", defaultAudioStreamIndex: 2, mediaStreams: [
+        MediaStream(type: "Video", codec: "h264", index: 0),
+        MediaStream(type: "Attachment", index: 1),
+        MediaStream(type: "Audio", codec: "aac", index: 2, language: "eng"),
+        MediaStream(type: "Audio", codec: "ac3", index: 3, language: "ita"),
+        MediaStream(type: "Subtitle", codec: "PGSSUB", index: 4, language: "eng"),
+        MediaStream(type: "Subtitle", codec: "subrip", index: 5, language: "ita", title: "Forced"),
+        MediaStream(type: "Subtitle", codec: "subrip", index: 6, language: "ita"),
+    ])
+
+    func testItalianAudioNoSubtitlesShowsForcedOnly() {
+        let c = Tracks.defaultChoice(for: source, audio: .italian, subtitles: .off)
+        XCTAssertEqual(c.audioIndex, 3)
+        XCTAssertEqual(c.subtitleIndex, 5)
+    }
+
+    func testEnglishAudioItalianSubtitlesPicksFullOnes() {
+        let c = Tracks.defaultChoice(for: source, audio: .english, subtitles: .italian)
+        XCTAssertEqual(c.audioIndex, 2)
+        XCTAssertEqual(c.subtitleIndex, 6)
+    }
+
+    func testOriginalAudioKeepsFileDefault() {
+        let c = Tracks.defaultChoice(for: source, audio: .original, subtitles: .off)
+        XCTAssertEqual(c.audioIndex, 2)
+        XCTAssertNil(c.subtitleIndex)
+        XCTAssertFalse(Tracks.needsTrackControl(c, source: source))
+    }
+
+    func testVLCPositions() {
+        XCTAssertEqual(Tracks.vlcPosition(of: 3, in: Tracks.audio(source)), 1)
+        XCTAssertEqual(Tracks.vlcPosition(of: 6, in: Tracks.subtitles(source)), 2)
+        XCTAssertNil(Tracks.vlcPosition(of: nil, in: Tracks.audio(source)))
+    }
+
+    func testTrackControlDropsAppleDirect() {
+        let a = URL(string: "https://s/a.mp4")!, s = URL(string: "https://s/s")!
+        XCTAssertEqual(PlaybackDecider.routes(appleCompatible: true, appleStaticURL: a, staticURL: s,
+                                              transcodeURL: nil, preference: .automatic, needsTrackControl: true),
+                       [.vlcDirect(s)])
+    }
+}

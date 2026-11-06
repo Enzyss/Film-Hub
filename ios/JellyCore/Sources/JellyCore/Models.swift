@@ -43,6 +43,9 @@ public struct MediaStream: Codable, Hashable, Sendable {
     public var isExternal: Bool?
     public var isTextSubtitleStream: Bool?
     public var channels: Int?
+    public var isForced: Bool?
+    public var height: Int?
+    public var videoRangeType: String?
 }
 
 public struct MediaSource: Codable, Hashable, Sendable {
@@ -117,11 +120,59 @@ public struct BaseItem: Codable, Hashable, Identifiable, Sendable {
     public var collectionType: String?
     public var userData: UserData?
     public var mediaSources: [MediaSource]?
+    public var criticRating: Double?
+    public var genres: [String]?
+    public var studios: [NameId]?
+    public var people: [Person]?
+    public var providerIds: [String: String]?
+    public var taglines: [String]?
+    public var childCount: Int?
+    public var endDate: String?
+    public var status: String?
 
     public init(id: String, name: String? = nil, type: String? = nil) {
         self.id = id
         self.name = name
         self.type = type
+    }
+
+    public var isSeries: Bool { type == "Series" }
+    public var isMovie: Bool { type == "Movie" }
+
+    /// Provider id by name ("Tmdb", "Imdb"). Checks both casings, see imageTag.
+    public func providerId(_ name: String) -> String? {
+        providerIds?[name] ?? providerIds?[JellyfinCoding.lowerFirst(name)]
+    }
+
+    /// Identifies the same film across libraries (HD and 4K copies).
+    public var dedupeKey: String {
+        if let t = providerId("Tmdb"), !t.isEmpty { return "tmdb:\(type ?? ""):\(t)" }
+        if let i = providerId("Imdb"), !i.isEmpty { return "imdb:\(i)" }
+        return "name:\(type ?? ""):\((name ?? "").lowercased()):\(productionYear ?? 0)"
+    }
+
+    /// "★ 7.8" from the audience score, if any.
+    public var ratingLabel: String? {
+        guard let r = communityRating, r > 0 else { return nil }
+        return String(format: "★ %.1f", r)
+    }
+
+    /// "92%" from the critics' score, if any.
+    public var criticLabel: String? {
+        guard let c = criticRating, c > 0 else { return nil }
+        return "\(Int(c.rounded()))%"
+    }
+
+    public var isPlayed: Bool { userData?.played == true }
+
+    /// "2008 · 5 stagioni" or "1999 · 2 h 16 min".
+    public var metaLine: String {
+        var parts: [String] = []
+        if let y = productionYear { parts.append(String(y)) }
+        if isSeries, let n = childCount, n > 0 { parts.append(n == 1 ? "1 stagione" : "\(n) stagioni") }
+        if !isSeries, let rt = runTimeTicks, rt > 0 { parts.append(Ticks.duration(rt)) }
+        if let r = officialRating, !r.isEmpty { parts.append(r) }
+        return parts.joined(separator: " · ")
     }
 
     public var isEpisode: Bool { type == "Episode" }
@@ -169,5 +220,26 @@ public struct BaseItem: Codable, Hashable, Identifiable, Sendable {
     /// applies key strategies to dictionary keys as well.
     public func imageTag(_ type: String) -> String? {
         imageTags?[type] ?? imageTags?[JellyfinCoding.lowerFirst(type)]
+    }
+}
+
+public struct NameId: Codable, Hashable, Sendable {
+    public var name: String?
+    public var id: String?
+}
+
+public struct Person: Codable, Hashable, Sendable, Identifiable {
+    public var id: String
+    public var name: String?
+    public var role: String?
+    public var type: String?
+    public var primaryImageTag: String?
+}
+
+extension Array where Element == BaseItem {
+    /// One card per film: the first copy wins (HD and 4K libraries hold both).
+    public func deduplicated() -> [BaseItem] {
+        var seen = Set<String>()
+        return filter { seen.insert($0.dedupeKey).inserted }
     }
 }
