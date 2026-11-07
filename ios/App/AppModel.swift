@@ -25,6 +25,10 @@ final class AppModel {
     /// What the full-screen player is showing, if anything.
     var playing: PlayRequest?
 
+    /// The running playback. Outlives the player screen while in Picture in
+    /// Picture, so the film keeps going while you browse or use other apps.
+    @ObservationIgnored private(set) var activePlayer: PlayerModel?
+
     var playerPreference: PlayerPreference {
         didSet { Prefs.playerPreference = playerPreference.rawValue }
     }
@@ -48,6 +52,11 @@ final class AppModel {
     /// a home card they are worked out from the language preferences.
     func play(_ item: BaseItem, source: MediaSource? = nil, choice: TrackChoice? = nil,
               prefetched: PlayRequest.Prefetched? = nil) {
+        // A new film replaces one still running in PiP.
+        if let active = activePlayer, active.isPiPActive {
+            active.close()
+            activePlayer = nil
+        }
         playing = PlayRequest(item: item, source: source, choice: choice, prefetched: prefetched)
     }
 
@@ -150,7 +159,41 @@ final class AppModel {
         homeRefreshToken += 1
     }
 
+    /// The model for a player screen: the running one if the screen comes back
+    /// from PiP, else a new one (ending whatever played before).
+    func player(for request: PlayRequest, api: JellyfinAPI) -> PlayerModel {
+        if let current = activePlayer, current.request.id == request.id { return current }
+        activePlayer?.close()
+        let model = PlayerModel(request: request, api: api, sync: progress, preference: playerPreference,
+                                audio: audioPreference, subtitles: subtitlePreference)
+        model.onPiPStarted = { [weak self] in
+            // Free the screen: the film goes on in the PiP window.
+            self?.playing = nil
+        }
+        model.onPiPRestore = { [weak self, weak model] in
+            guard let self, let model else { return }
+            self.playing = model.request
+        }
+        model.onPiPClosed = { [weak self, weak model] in
+            guard let self, let model else { return }
+            model.close()
+            if self.activePlayer === model { self.activePlayer = nil }
+            if self.playing?.id == model.request.id { self.playing = nil }
+            self.refreshAfterPlayback()
+        }
+        activePlayer = model
+        return model
+    }
+
     func playerDidClose() {
+        // Dismissed because PiP started: the film is still playing.
+        if let active = activePlayer, active.isPiPActive { return }
+        activePlayer?.close()
+        activePlayer = nil
+        refreshAfterPlayback()
+    }
+
+    private func refreshAfterPlayback() {
         playing = nil
         // Give the "stopped" report a moment to land, then reload home.
         Task {

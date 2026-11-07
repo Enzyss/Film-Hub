@@ -30,6 +30,41 @@ struct StartTracks: Equatable {
     static let none = StartTracks()
 }
 
+enum PiPEvent: Equatable {
+    case started
+    /// The PiP window closed (by its X, or after a restore).
+    case stopped
+    /// The user tapped "back to the app" in the PiP window.
+    case restore
+    case failed(String)
+}
+
+/// AVKit calls back on the main thread; this hands each event to a closure.
+final class PiPDelegate: NSObject, AVPictureInPictureControllerDelegate {
+    var onEvent: ((PiPEvent) -> Void)?
+
+    func pictureInPictureControllerDidStartPictureInPicture(_ c: AVPictureInPictureController) {
+        onEvent?(.started)
+    }
+
+    func pictureInPictureControllerDidStopPictureInPicture(_ c: AVPictureInPictureController) {
+        onEvent?(.stopped)
+    }
+
+    func pictureInPictureController(_ c: AVPictureInPictureController,
+                                    failedToStartPictureInPictureWithError error: Error) {
+        onEvent?(.failed(error.localizedDescription))
+    }
+
+    func pictureInPictureController(
+        _ c: AVPictureInPictureController,
+        restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void
+    ) {
+        onEvent?(.restore)
+        completionHandler(true)
+    }
+}
+
 /// What the player screen needs from a video engine. Both engines are polled by
 /// PlayerModel; neither calls back, so there is one source of truth for state.
 @MainActor
@@ -51,6 +86,14 @@ protocol PlaybackEngine: AnyObject {
     func selectAudio(_ id: Int)
     /// nil turns subtitles off.
     func selectSubtitle(_ id: Int?)
+
+    /// Picture in Picture: only the Apple player has it on iPhone.
+    var supportsPiP: Bool { get }
+    var isPiPPossible: Bool { get }
+    /// Returns false if PiP cannot start yet (the video is not ready).
+    func startPiP() -> Bool
+    func stopPiP()
+    var onPiP: ((PiPEvent) -> Void)? { get set }
 }
 
 // MARK: - Apple (AVPlayer)
@@ -66,14 +109,39 @@ final class AppleEngine: PlaybackEngine {
     private let layerView = PlayerLayerView()
     private var audioGroup: AVMediaSelectionGroup?
     private var legibleGroup: AVMediaSelectionGroup?
+    private var pip: AVPictureInPictureController?
+    private let pipDelegate = PiPDelegate()
     var view: UIView { layerView }
+    var onPiP: ((PiPEvent) -> Void)?
 
     init() {
         layerView.backgroundColor = .black
         layerView.playerLayer.player = player
         layerView.playerLayer.videoGravity = .resizeAspect
         player.automaticallyWaitsToMinimizeStalling = true
+        if AVPictureInPictureController.isPictureInPictureSupported() {
+            let controller = AVPictureInPictureController(playerLayer: layerView.playerLayer)
+            // Going to the home screen while playing turns into PiP by itself.
+            controller?.canStartPictureInPictureAutomaticallyFromInline = true
+            controller?.delegate = pipDelegate
+            pip = controller
+        }
+        pipDelegate.onEvent = { [weak self] event in
+            MainActor.assumeIsolated { self?.onPiP?(event) }
+        }
     }
+
+    static var isPiPSupportedOnDevice: Bool { AVPictureInPictureController.isPictureInPictureSupported() }
+    var supportsPiP: Bool { pip != nil }
+    var isPiPPossible: Bool { pip?.isPictureInPicturePossible == true }
+
+    func startPiP() -> Bool {
+        guard let pip, pip.isPictureInPicturePossible else { return false }
+        pip.startPictureInPicture()
+        return true
+    }
+
+    func stopPiP() { pip?.stopPictureInPicture() }
 
     func load(url: URL, startSeconds: Double, tracks: StartTracks) {
         let asset = AVURLAsset(url: url)
@@ -128,6 +196,7 @@ final class AppleEngine: PlaybackEngine {
     }
 
     func stop() {
+        pip?.stopPictureInPicture()
         player.pause()
         player.replaceCurrentItem(with: nil)
     }
@@ -175,6 +244,11 @@ final class VLCEngine: PlaybackEngine {
     private var pending: StartTracks = .none
     private var appliedPending = false
     var view: UIView { drawable }
+    var onPiP: ((PiPEvent) -> Void)?
+    var supportsPiP: Bool { false }
+    var isPiPPossible: Bool { false }
+    func startPiP() -> Bool { false }
+    func stopPiP() {}
 
     init() {
         drawable.backgroundColor = .black

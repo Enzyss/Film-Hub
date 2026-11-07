@@ -105,7 +105,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Riproduzione")
                 } footer: {
-                    Text("Automatico usa il player Apple quando il file lo permette e VLC per tutto il resto (MKV, DTS, sottotitoli PGS…). La conversione sul server si usa solo se entrambi falliscono.")
+                    Text("Automatico usa il player Apple quando il file lo permette e VLC per tutto il resto (MKV, DTS, sottotitoli PGS…). Il Picture in Picture funziona solo col player Apple: su un MKV il tasto PiP passa da solo al flusso del server. \"Preferisci Apple\" lo fa sempre, così il PiP parte anche uscendo dall'app.")
                 }
                 Section {
                     LabeledContent("Posizioni da inviare", value: "\(pendingCount)")

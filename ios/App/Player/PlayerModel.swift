@@ -34,10 +34,25 @@ final class PlayerModel {
     private(set) var currentAudio: Int?
     private(set) var currentSubtitle: Int?
 
+    // Picture in Picture
+    private(set) var isPiPActive = false
+    /// A short message over the video ("Picture in Picture non disponibile…").
+    private(set) var notice: String?
+    /// Set by AppModel: what happens to the screen when PiP starts, is
+    /// restored, or is closed from its own window.
+    @ObservationIgnored var onPiPStarted: (() -> Void)?
+    @ObservationIgnored var onPiPRestore: (() -> Void)?
+    @ObservationIgnored var onPiPClosed: (() -> Void)?
+    @ObservationIgnored private var pendingPiP = false
+    @ObservationIgnored private var pendingPiPTicks = 0
+    @ObservationIgnored private var restoringFromPiP = false
+    /// True once start() has run: a reopened screen reuses the running model.
+    @ObservationIgnored private(set) var started = false
+
     @ObservationIgnored private let api: JellyfinAPI
     @ObservationIgnored private let sync: ProgressSync
     @ObservationIgnored private let preference: PlayerPreference
-    @ObservationIgnored private let request: PlayRequest
+    let request: PlayRequest
     @ObservationIgnored private let audioPreference: AudioPreference
     @ObservationIgnored private let subtitlePreference: SubtitlePreference
     @ObservationIgnored private var startTracks: StartTracks = .none
@@ -90,6 +105,8 @@ final class PlayerModel {
     // MARK: Start
 
     func start() async {
+        guard !started else { return }
+        started = true
         phase = .preparing
         let startSeconds = item.resumeSeconds
         position = startSeconds
@@ -199,6 +216,7 @@ final class PlayerModel {
         lastSeenPosition = -1
         lastAdvanceAt = Date()
         routeOpenedAt = Date()
+        newEngine.onPiP = { [weak self] event in self?.handlePiP(event) }
         newEngine.load(url: route.url, startSeconds: seconds, tracks: route.usesVLC ? startTracks : .none)
         if !wantsToPlay { newEngine.pause() }
     }
@@ -263,12 +281,17 @@ final class PlayerModel {
         }
     }
 
-    /// The app is going to the background: pause and make sure the position lands.
+    /// The app is going to the background: pause (unless PiP takes over) and
+    /// make sure the position lands.
     func enterBackground() {
         guard !closed, engine != nil else { return }
-        wantsToPlay = false
-        engine?.pause()
-        if phase == .playing || phase == .buffering { phase = .paused }
+        // The Apple player turns into PiP by itself when playing: keep going.
+        let pipTakesOver = engine?.supportsPiP == true && (isPlaying || isPiPActive)
+        if !pipTakesOver {
+            wantsToPlay = false
+            engine?.pause()
+            if phase == .playing || phase == .buffering { phase = .paused }
+        }
         let taskId = UIApplication.shared.beginBackgroundTask(withName: "progress")
         let report = makeReport(paused: true)
         let sync = sync
@@ -276,6 +299,68 @@ final class PlayerModel {
         Task {
             await sync.report(.progress, report, runTimeTicks: run)
             UIApplication.shared.endBackgroundTask(taskId)
+        }
+    }
+
+    // MARK: Picture in Picture
+
+    /// True when PiP can work for this film: the Apple player now, or a switch
+    /// to the server's HLS stream for files only VLC opens (MKV and the rest).
+    var canPiP: Bool {
+        if engine?.supportsPiP == true { return true }
+        return routes.contains { !$0.usesVLC } && AppleEngine.isPiPSupportedOnDevice
+    }
+
+    func requestPiP() {
+        if isPiPActive { engine?.stopPiP(); return }
+        if engine?.supportsPiP == true {
+            pendingPiP = true
+            pendingPiPTicks = 0
+            return
+        }
+        // On VLC: reopen the same second with the Apple player on the server's
+        // HLS stream (it repackages the file, ~3.5 s on the user's server).
+        guard let idx = routes.firstIndex(where: { !$0.usesVLC }) else {
+            show(notice: "Picture in Picture non disponibile per questo file.")
+            return
+        }
+        routeIndex = idx
+        pendingPiP = true
+        pendingPiPTicks = 0
+        wantsToPlay = true
+        phase = .preparing
+        open(at: position)
+        openingMessage = "Preparo il Picture in Picture…"
+    }
+
+    private func handlePiP(_ event: PiPEvent) {
+        switch event {
+        case .started:
+            isPiPActive = true
+            pendingPiP = false
+            onPiPStarted?()
+        case .restore:
+            restoringFromPiP = true
+            onPiPRestore?()
+        case .stopped:
+            isPiPActive = false
+            if restoringFromPiP {
+                restoringFromPiP = false
+            } else {
+                // Closed from the PiP window: the film ends here.
+                onPiPClosed?()
+            }
+        case .failed(let message):
+            pendingPiP = false
+            show(notice: "Picture in Picture non riuscito: \(message)")
+        }
+    }
+
+    private func show(notice text: String) {
+        notice = text
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(4))
+            if self?.notice == text { self?.notice = nil }
         }
     }
 
@@ -383,9 +468,17 @@ final class PlayerModel {
         switch status {
         case .playing:
             phase = .playing
+            // Play pressed outside our controls (PiP window, lock screen).
+            if hasPlayedAnything { wantsToPlay = true }
             if now.timeIntervalSince(smoothSince) > 60 { reloadsInARow = 0 }
         case .paused:
-            phase = wantsToPlay ? .buffering : .paused
+            if hasPlayedAnything {
+                // Paused outside our controls (PiP window): not a stall.
+                if wantsToPlay { wantsToPlay = false; report(.progress) }
+                phase = .paused
+            } else {
+                phase = wantsToPlay ? .buffering : .paused
+            }
         case .buffering, .opening:
             phase = hasPlayedAnything ? .buffering : .preparing
             smoothSince = now
@@ -394,6 +487,19 @@ final class PlayerModel {
         }
 
         if hasPlayedAnything { refreshTracks() }
+
+        // PiP asked for: start it as soon as the Apple player is ready.
+        if pendingPiP, hasPlayedAnything, let engine, engine.supportsPiP {
+            if engine.startPiP() {
+                pendingPiP = false
+            } else {
+                pendingPiPTicks += 1
+                if pendingPiPTicks > 20 {  // ~10 s
+                    pendingPiP = false
+                    show(notice: "Picture in Picture non disponibile in questo momento.")
+                }
+            }
+        }
 
         if hasPlayedAnything, now.timeIntervalSince(lastReportAt) >= Self.reportInterval {
             report(.progress)

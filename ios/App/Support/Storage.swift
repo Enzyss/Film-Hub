@@ -113,6 +113,12 @@ enum Prefs {
         set { d.set(newValue, forKey: "subtitlePreference") }
     }
 
+    /// The player's landscape lock, kept for the next film.
+    static var landscapeLock: Bool {
+        get { d.bool(forKey: "landscapeLock") }
+        set { d.set(newValue, forKey: "landscapeLock") }
+    }
+
     static var recentSearches: [String] {
         get { d.stringArray(forKey: "recentSearches") ?? [] }
         set { d.set(Array(newValue.prefix(10)), forKey: "recentSearches") }

@@ -14,6 +14,7 @@ struct PlayerView: View {
     @State private var controlsVisible = true
     @State private var hideTask: Task<Void, Never>?
     @State private var scrubbing: Double?
+    @State private var landscapeLocked = Prefs.landscapeLock
 
     var body: some View {
         ZStack {
@@ -31,6 +32,19 @@ struct PlayerView: View {
 
             if let model {
                 statusLayer(model)
+                if let notice = model.notice {
+                    Text(notice)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, Theme.Space.l)
+                        .padding(.vertical, Theme.Space.s)
+                        .background(Theme.Colors.scrim)
+                        .clipShape(Capsule())
+                        .frame(maxHeight: .infinity, alignment: .bottom)
+                        .padding(.bottom, 90)
+                        .transition(.opacity)
+                        .allowsHitTesting(false)
+                }
                 if controlsVisible || !model.isPlaying {
                     controls(model)
                         .transition(.opacity)
@@ -43,10 +57,11 @@ struct PlayerView: View {
         .persistentSystemOverlays(.hidden)
         .task {
             guard model == nil, let api = app.api else { return }
-            let m = PlayerModel(request: request, api: api, sync: app.progress, preference: app.playerPreference,
-                                audio: app.audioPreference, subtitles: app.subtitlePreference)
+            // Back from Picture in Picture: the same film, still running.
+            let m = app.player(for: request, api: api)
             model = m
             UIApplication.shared.isIdleTimerDisabled = true
+            if landscapeLocked { Orientation.lockLandscape() }
             scheduleHide()
             await m.start()
         }
@@ -58,7 +73,9 @@ struct PlayerView: View {
         }
         .onDisappear {
             UIApplication.shared.isIdleTimerDisabled = false
-            model?.close()
+            if landscapeLocked { Orientation.unlock(backToPortrait: true) }
+            // In PiP the film goes on without this screen.
+            if model?.isPiPActive != true { model?.close() }
         }
     }
 
@@ -130,6 +147,24 @@ struct PlayerView: View {
                     }
                 }
                 Spacer()
+                Button { toggleLandscapeLock() } label: {
+                    Image(systemName: landscapeLocked ? "lock.rotation" : "lock.open.rotation")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(landscapeLocked ? Theme.Colors.accent : .white)
+                        .frame(width: Theme.Size.playerButton, height: Theme.Size.playerButton)
+                }
+                .accessibilityLabel(landscapeLocked ? "Sblocca rotazione" : "Blocca in orizzontale")
+                if model.canPiP {
+                    Button {
+                        model.requestPiP()
+                        scheduleHide()
+                    } label: {
+                        Image(systemName: model.isPiPActive ? "pip.exit" : "pip.enter")
+                            .font(.title3.weight(.semibold))
+                            .frame(width: Theme.Size.playerButton, height: Theme.Size.playerButton)
+                    }
+                    .accessibilityLabel("Picture in Picture")
+                }
                 if !model.audioOptions.isEmpty || !model.subtitleOptions.isEmpty {
                     tracksMenu(model)
                 }
@@ -265,6 +300,19 @@ struct PlayerView: View {
     }
 
     // MARK: Behaviour
+
+    /// Lock: turns the screen to landscape and keeps it there, even if the phone
+    /// is held upright. Unlock: the screen follows the phone again.
+    private func toggleLandscapeLock() {
+        landscapeLocked.toggle()
+        Prefs.landscapeLock = landscapeLocked
+        if landscapeLocked {
+            Orientation.lockLandscape()
+        } else {
+            Orientation.unlock(backToPortrait: false)
+        }
+        scheduleHide()
+    }
 
     private func toggleControls() {
         withAnimation(.easeInOut(duration: 0.2)) { controlsVisible.toggle() }
