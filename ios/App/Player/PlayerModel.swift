@@ -489,7 +489,7 @@ final class PlayerModel {
         if hasPlayedAnything { refreshTracks() }
 
         // PiP asked for: start it as soon as the Apple player is ready.
-        if pendingPiP, hasPlayedAnything, let engine, engine.supportsPiP {
+        if pendingPiP, hasPlayedAnything, engine.supportsPiP {
             if engine.startPiP() {
                 pendingPiP = false
             } else {
