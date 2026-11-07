@@ -32,16 +32,24 @@ struct RemoteImage: View {
     let url: URL?
 
     var body: some View {
-        AsyncImage(url: url, transaction: Transaction(animation: .easeOut(duration: 0.2))) { phase in
-            switch phase {
-            case .success(let image):
-                image.resizable().scaledToFill()
-            case .failure:
-                placeholder(icon: "film")
-            default:
-                placeholder(icon: nil)
+        // The image fills the space it is given and is cropped to it. Laid out
+        // as an overlay on an empty view, so a picture bigger than its frame
+        // can never widen the page (it did on the title page: everything
+        // shifted and was cut at both edges).
+        Color.clear
+            .overlay {
+                AsyncImage(url: url, transaction: Transaction(animation: .easeOut(duration: 0.2))) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image.resizable().scaledToFill()
+                    case .failure:
+                        placeholder(icon: "film")
+                    default:
+                        placeholder(icon: nil)
+                    }
+                }
             }
-        }
+            .clipped()
     }
 
     private func placeholder(icon: String?) -> some View {

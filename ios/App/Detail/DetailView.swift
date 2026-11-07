@@ -34,6 +34,8 @@ struct DetailView: View {
                 }
             }
             .padding(.bottom, Theme.Space.xxl)
+            // Never wider than the screen, whatever a child asks for.
+            .frame(width: UIScreen.main.bounds.width, alignment: .leading)
         }
         .ignoresSafeArea(edges: .top)
         .background(Theme.Colors.background)
