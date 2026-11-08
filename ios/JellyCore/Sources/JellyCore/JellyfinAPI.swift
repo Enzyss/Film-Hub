@@ -335,6 +335,23 @@ public struct JellyfinAPI: Sendable {
         ]).items?.first
     }
 
+    /// The episode after this one in its series (across seasons), if any.
+    public func nextEpisode(after episode: BaseItem) async throws -> BaseItem? {
+        guard episode.isEpisode, let sid = episode.seriesId else { return nil }
+        let uid = try requireUser()
+        let list = try await get(QueryResult<BaseItem>.self, "/Shows/\(sid)/Episodes", [
+            URLQueryItem(name: "userId", value: uid),
+            URLQueryItem(name: "startItemId", value: episode.id),
+            URLQueryItem(name: "limit", value: "2"),
+            URLQueryItem(name: "enableUserData", value: "true"),
+            URLQueryItem(name: "fields", value: "Overview"),
+            URLQueryItem(name: "imageTypeLimit", value: "1"),
+            URLQueryItem(name: "enableImageTypes", value: "Primary,Thumb"),
+        ]).items ?? []
+        guard let i = list.firstIndex(where: { $0.id == episode.id }), i + 1 < list.count else { return nil }
+        return list[i + 1]
+    }
+
     public func similar(id: String, limit: Int = 16) async throws -> [BaseItem] {
         let uid = try requireUser()
         let items = try await get(QueryResult<BaseItem>.self, "/Items/\(id)/Similar", [

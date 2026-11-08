@@ -4,7 +4,8 @@ import JellyCore
 /// S08: full-screen player. Same controls whichever engine is playing.
 struct PlayerView: View {
     let request: PlayRequest
-    private var item: BaseItem { request.item }
+    /// What is playing now: the next episode replaces the first one.
+    private var item: BaseItem { model?.item ?? request.item }
 
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
@@ -32,6 +33,15 @@ struct PlayerView: View {
 
             if let model {
                 statusLayer(model)
+                if let left = model.upNextCountdown, let next = model.upNext {
+                    UpNextCard(next: next, secondsLeft: left, api: app.api,
+                               play: { model.playUpNextNow() },
+                               dismiss: { model.dismissUpNext() })
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                        .padding(.trailing, Theme.Space.l)
+                        .padding(.bottom, 96)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
                 if let notice = model.notice {
                     Text(notice)
                         .font(.footnote.weight(.semibold))
@@ -355,5 +365,59 @@ struct EngineHost: UIViewRepresentable {
         engineView.frame = container.bounds
         engineView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         container.addSubview(engineView)
+    }
+}
+
+/// "Next episode" card, bottom right, in the last 30 seconds. Starts by itself
+/// at zero; X keeps watching the credits.
+struct UpNextCard: View {
+    let next: BaseItem
+    let secondsLeft: Int
+    let api: JellyfinAPI?
+    let play: () -> Void
+    let dismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: Theme.Space.m) {
+            Button(action: play) {
+                HStack(spacing: Theme.Space.m) {
+                    ZStack {
+                        RemoteImage(url: next.landscapeImageURL(api: api, width: 240))
+                            .frame(width: 96, height: 54)
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                        Image(systemName: "play.fill")
+                            .font(.title3)
+                            .foregroundStyle(.white)
+                            .shadow(radius: 4)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Prossimo episodio tra \(secondsLeft) s")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Theme.Colors.accent)
+                        Text([next.episodeLabel, next.name].compactMap { $0 }.joined(separator: " · "))
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .lineLimit(2)
+                    }
+                    .frame(maxWidth: 170, alignment: .leading)
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Guarda il prossimo episodio")
+
+            Button(action: dismiss) {
+                Image(systemName: "xmark")
+                    .font(.footnote.weight(.bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 32, height: 32)
+                    .background(.white.opacity(0.15))
+                    .clipShape(Circle())
+            }
+            .accessibilityLabel("Resta su questo episodio")
+        }
+        .padding(Theme.Space.m)
+        .background(.ultraThinMaterial.opacity(0.9))
+        .background(Color.black.opacity(0.5))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
     }
 }

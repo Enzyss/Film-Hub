@@ -8,8 +8,8 @@ public enum PlayerPreference: String, CaseIterable, Codable, Sendable {
     public var label: String {
         switch self {
         case .automatic: return "Automatico"
-        case .alwaysVLC: return "Sempre VLC"
-        case .preferApple: return "Preferisci Apple"
+        case .alwaysVLC: return "Sempre VLC (più veloce)"
+        case .preferApple: return "Sempre Apple (PiP)"
         }
     }
 }
@@ -73,6 +73,20 @@ public enum PlaybackDecider {
         return source.supportsDirectPlay != false
     }
 
+    /// Files the server only needs to repackage for the Apple player: the video
+    /// is copied as is, the audio too. Tested on the user's server: such MKVs
+    /// start in ~5-6 s through the server (VLC: 3-5 s), and get Picture in
+    /// Picture. Dolby Vision with TrueHD took 25 s, DTS 7.7 s: those stay on VLC.
+    public static func isRepackagedQuickly(_ source: MediaSource) -> Bool {
+        guard let video = source.videoStream,
+              let vcodec = video.codec?.lowercased(),
+              DeviceProfile.appleVideoCodecs.contains(vcodec) else { return false }
+        if let range = video.videoRangeType, range.uppercased().contains("DOVI") { return false }
+        guard let audio = source.defaultAudioStream else { return true }
+        guard let acodec = audio.codec?.lowercased() else { return false }
+        return DeviceProfile.appleAudioCodecs.contains(acodec)
+    }
+
     /// The first Apple-friendly container, used as the stream URL extension.
     public static func appleExtension(for source: MediaSource) -> String {
         let containers = (source.container ?? "").lowercased().split(separator: ",").map(String.init)
@@ -85,7 +99,9 @@ public enum PlaybackDecider {
         staticURL: URL,
         transcodeURL: URL?,
         preference: PlayerPreference,
-        needsTrackControl: Bool = false
+        needsTrackControl: Bool = false,
+        repackagedQuickly: Bool = false,
+        subtitlesOn: Bool = false
     ) -> [PlaybackRoute] {
         // A non-default audio track or any subtitle: VLC picks and loads them
         // reliably on direct play; the Apple player cannot load external files.
@@ -93,9 +109,19 @@ public enum PlaybackDecider {
         var routes: [PlaybackRoute] = []
         switch preference {
         case .automatic:
-            if appleCompatible { routes.append(.appleDirect(appleStaticURL)) }
-            routes.append(.vlcDirect(staticURL))
-            if let t = transcodeURL { routes.append(.appleTranscode(t)) }
+            if appleCompatible {
+                routes.append(.appleDirect(appleStaticURL))
+                routes.append(.vlcDirect(staticURL))
+                if let t = transcodeURL { routes.append(.appleTranscode(t)) }
+            } else if let t = transcodeURL, repackagedQuickly, !subtitlesOn {
+                // Apple player through the server: Picture in Picture works,
+                // also by itself when leaving the app. VLC if it fails.
+                routes.append(.appleTranscode(t))
+                routes.append(.vlcDirect(staticURL))
+            } else {
+                routes.append(.vlcDirect(staticURL))
+                if let t = transcodeURL { routes.append(.appleTranscode(t)) }
+            }
         case .alwaysVLC:
             routes.append(.vlcDirect(staticURL))
             if let t = transcodeURL { routes.append(.appleTranscode(t)) }

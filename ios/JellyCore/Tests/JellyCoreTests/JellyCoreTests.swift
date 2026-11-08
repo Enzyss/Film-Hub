@@ -465,3 +465,39 @@ final class AnimeTests: XCTestCase {
         XCTAssertEqual(items.map(\.versionLabel), ["Doppiato ITA", "Sub ITA", "Inglese", "4K"])
     }
 }
+
+final class PiPRoutingTests: XCTestCase {
+    let a = URL(string: "https://s/a.mp4")!, s = URL(string: "https://s/s")!, t = URL(string: "https://s/t.m3u8")!
+
+    func src(video: String = "h264", range: String? = "SDR", audio: String? = "eac3") -> MediaSource {
+        var streams = [MediaStream(type: "Video", codec: video, index: 0, videoRangeType: range)]
+        if let audio { streams.append(MediaStream(type: "Audio", codec: audio, index: 1)) }
+        return MediaSource(id: "m", container: "mkv", defaultAudioStreamIndex: 1, mediaStreams: streams)
+    }
+
+    func testQuickRepackaging() {
+        XCTAssertTrue(PlaybackDecider.isRepackagedQuickly(src()))
+        XCTAssertTrue(PlaybackDecider.isRepackagedQuickly(src(video: "hevc", range: "HDR10", audio: "ac3")))
+        XCTAssertFalse(PlaybackDecider.isRepackagedQuickly(src(audio: "dts")))
+        XCTAssertFalse(PlaybackDecider.isRepackagedQuickly(src(video: "hevc", range: "DOVIWithHDR10", audio: "eac3")))
+        XCTAssertFalse(PlaybackDecider.isRepackagedQuickly(src(video: "mpeg4")))
+    }
+
+    func testMKVThatRepackagesGoesToApple() {
+        XCTAssertEqual(PlaybackDecider.routes(appleCompatible: false, appleStaticURL: a, staticURL: s, transcodeURL: t,
+                                              preference: .automatic, repackagedQuickly: true),
+                       [.appleTranscode(t), .vlcDirect(s)])
+    }
+
+    func testSubtitlesOrHeavyFilesStayOnVLC() {
+        XCTAssertEqual(PlaybackDecider.routes(appleCompatible: false, appleStaticURL: a, staticURL: s, transcodeURL: t,
+                                              preference: .automatic, repackagedQuickly: true, subtitlesOn: true),
+                       [.vlcDirect(s), .appleTranscode(t)])
+        XCTAssertEqual(PlaybackDecider.routes(appleCompatible: false, appleStaticURL: a, staticURL: s, transcodeURL: t,
+                                              preference: .automatic, repackagedQuickly: false),
+                       [.vlcDirect(s), .appleTranscode(t)])
+        XCTAssertEqual(PlaybackDecider.routes(appleCompatible: false, appleStaticURL: a, staticURL: s, transcodeURL: t,
+                                              preference: .alwaysVLC, repackagedQuickly: true),
+                       [.vlcDirect(s), .appleTranscode(t)])
+    }
+}

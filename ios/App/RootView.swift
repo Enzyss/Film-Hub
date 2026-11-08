@@ -105,7 +105,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Riproduzione")
                 } footer: {
-                    Text("Automatico usa il player Apple quando il file lo permette e VLC per tutto il resto (MKV, DTS, sottotitoli PGS…). Il Picture in Picture funziona solo col player Apple: su un MKV il tasto PiP passa da solo al flusso del server. \"Preferisci Apple\" lo fa sempre, così il PiP parte anche uscendo dall'app.")
+                    Text("Automatico: i file normali si aprono col player Apple (Picture in Picture anche uscendo dall'app); 4K Dolby Vision, audio DTS/TrueHD e sottotitoli attivi con VLC, che li apre più in fretta. Sempre VLC: apertura più veloce, PiP solo dal tasto e più lento. Sempre Apple: PiP su tutto, ma i 4K possono metterci molto ad aprirsi.")
                 }
                 Section {
                     LabeledContent("Posizioni da inviare", value: "\(pendingCount)")

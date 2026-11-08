@@ -17,7 +17,8 @@ final class PlayerModel {
         case failed(String)
     }
 
-    let item: BaseItem
+    /// The episode or film playing. Changes when the next episode starts.
+    private(set) var item: BaseItem
     private(set) var phase: Phase = .preparing
     private(set) var position: Double = 0
     private(set) var duration: Double = 0
@@ -33,6 +34,14 @@ final class PlayerModel {
     private(set) var subtitleOptions: [EngineTrack] = []
     private(set) var currentAudio: Int?
     private(set) var currentSubtitle: Int?
+
+    // Next episode
+    private(set) var upNext: BaseItem?
+    /// Seconds left when the "next episode" card shows, nil when hidden.
+    private(set) var upNextCountdown: Int?
+    @ObservationIgnored private var upNextDismissed = false
+    /// Show the card this long before the end (the server has no credits markers).
+    static let upNextLead: Double = 30
 
     // Picture in Picture
     private(set) var isPiPActive = false
@@ -83,8 +92,9 @@ final class PlayerModel {
     /// ~3.5 s. Past 15 s the route is not going to open: try the next one
     /// instead of leaving a black screen.
     static let openTimeout: TimeInterval = 15
-    /// After this long, tell the user we are still working on it.
-    static let slowOpenNotice: TimeInterval = 6
+    /// After this long, tell the user we are still working on it. Opening takes
+    /// 3-6 s on the user's server, more on mobile data.
+    static let slowOpenNotice: TimeInterval = 9
     static let reportInterval: TimeInterval = 10
     static let maxReloads = 3
 
@@ -133,14 +143,19 @@ final class PlayerModel {
 
     private func prepareRoutes(startSeconds: Double) async throws {
         var source: MediaSource?
-        let wantedSource = request.source?.id
+        // The title page's version and tracks apply to the film it opened, not
+        // to the episodes that follow.
+        let isFirst = item.id == request.item.id
+        let wantedSource = isFirst ? request.source?.id : nil
+        let requestedChoice = isFirst ? request.choice : nil
         do {
             let info: PlaybackInfoResponse
-            if let pre = request.prefetched, pre.matches(choice: request.choice, mediaSourceId: wantedSource) {
+            if let pre = request.prefetched, item.id == request.item.id,
+               pre.matches(choice: request.choice, mediaSourceId: wantedSource) {
                 info = pre.info  // fetched while the title page was open
             } else {
                 info = try await api.playbackInfo(itemId: item.id, startTicks: Ticks.fromSeconds(startSeconds),
-                                                  mediaSourceId: wantedSource, choice: request.choice)
+                                                  mediaSourceId: wantedSource, choice: requestedChoice)
             }
             source = info.mediaSources?.first { $0.id == wantedSource } ?? info.mediaSources?.first
             playSessionId = info.playSessionId
@@ -154,13 +169,26 @@ final class PlayerModel {
             let full = try await api.item(id: item.id)
             source = full.mediaSources?.first
         }
-        guard let source else { throw JellyfinError.http(404) }
+        guard var source else { throw JellyfinError.http(404) }
         mediaSourceId = source.id
         if let rt = source.runTimeTicks, rt > 0 { runTimeTicks = rt }
 
-        let choice = request.choice
+        let choice = requestedChoice
             ?? Tracks.defaultChoice(for: source, audio: audioPreference, subtitles: subtitlePreference)
         startTracks = makeStartTracks(choice: choice, source: source)
+
+        let quick = PlaybackDecider.isRepackagedQuickly(source)
+        let subtitlesOn = choice.subtitleIndex != nil
+        // The server's stream must carry the chosen audio (Italian, say) when
+        // it is not the file's default: ask again with the choice (~0.5 s).
+        if requestedChoice == nil, quick, !subtitlesOn, preference != .alwaysVLC,
+           choice.audioIndex != source.defaultAudioStream?.index,
+           let again = try? await api.playbackInfo(itemId: item.id, startTicks: Ticks.fromSeconds(startSeconds),
+                                                   mediaSourceId: source.id, choice: choice),
+           let s = again.mediaSources?.first(where: { $0.id == source.id }) {
+            source = s
+            playSessionId = again.playSessionId
+        }
 
         let compatible = PlaybackDecider.isAppleCompatible(source)
         guard let staticURL = api.staticStreamURL(itemId: item.id, mediaSourceId: source.id,
@@ -176,7 +204,9 @@ final class PlayerModel {
             staticURL: staticURL,
             transcodeURL: api.transcodeURL(source.transcodingUrl),
             preference: preference,
-            needsTrackControl: Tracks.needsTrackControl(choice, source: source)
+            needsTrackControl: Tracks.needsTrackControl(choice, source: source),
+            repackagedQuickly: quick,
+            subtitlesOn: subtitlesOn
         )
     }
 
@@ -207,8 +237,15 @@ final class PlayerModel {
             return
         }
         let route = routes[routeIndex]
-        engine?.stop()
-        let newEngine: any PlaybackEngine = route.usesVLC ? VLCEngine() : AppleEngine()
+        let newEngine: any PlaybackEngine
+        if let current = engine, (current is VLCEngine) == route.usesVLC {
+            // Same kind of player: load the new stream in it. Keeps Picture in
+            // Picture open when the next episode starts.
+            newEngine = current
+        } else {
+            engine?.stop()
+            newEngine = route.usesVLC ? VLCEngine() : AppleEngine()
+        }
         engine = newEngine
         routeLabel = route.label
         openingMessage = routeIndex == 0 ? "Apertura…" : "Provo un altro modo (\(route.label))…"
@@ -299,6 +336,85 @@ final class PlayerModel {
         Task {
             await sync.report(.progress, report, runTimeTicks: run)
             UIApplication.shared.endBackgroundTask(taskId)
+        }
+    }
+
+    // MARK: Next episode
+
+    private func findNextEpisode() {
+        guard item.isEpisode, upNext == nil else { return }
+        let current = item
+        let api = api
+        Task { [weak self] in
+            let next = try? await api.nextEpisode(after: current)
+            guard let self, self.item.id == current.id else { return }
+            self.upNext = next
+        }
+    }
+
+    /// Shows the card in the last 30 seconds; at zero, the next episode starts.
+    private func updateUpNext() {
+        guard let next = upNext, !upNextDismissed, duration > Self.upNextLead * 3 else {
+            if upNextCountdown != nil { upNextCountdown = nil }
+            return
+        }
+        let left = duration - position
+        if left <= Self.upNextLead {
+            let secs = max(Int(left.rounded(.up)), 0)
+            if upNextCountdown != secs { upNextCountdown = secs }
+            if left <= 0.8 { playNext(next) }
+        } else if upNextCountdown != nil {
+            upNextCountdown = nil  // seeked back
+        }
+    }
+
+    func playUpNextNow() {
+        guard let next = upNext else { return }
+        playNext(next)
+    }
+
+    func dismissUpNext() {
+        upNextDismissed = true
+        upNextCountdown = nil
+    }
+
+    /// Ends this episode (it counts as watched) and starts the next one in the
+    /// same player.
+    private func playNext(_ next: BaseItem) {
+        guard !closed else { return }
+        position = max(position, duration)
+        let finished = makeReport(paused: false)
+        let sync = sync
+        let run = runTimeTicks
+        Task { await sync.report(.stopped, finished, runTimeTicks: run) }
+
+        item = next
+        upNext = nil
+        upNextCountdown = nil
+        upNextDismissed = false
+        routes = []
+        routeIndex = 0
+        playSessionId = nil
+        mediaSourceId = nil
+        runTimeTicks = next.runTimeTicks
+        startedReported = false
+        hasPlayedAnything = false
+        openSeconds = nil
+        reloadsInARow = 0
+        wantsToPlay = true
+        duration = 0
+        position = next.resumeSeconds
+        phase = .preparing
+        openingMessage = "Prossimo episodio…"
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.prepareRoutes(startSeconds: self.position)
+                guard !self.closed, self.item.id == next.id else { return }
+                self.open(at: self.position)
+            } catch {
+                self.phase = .failed(error.localizedDescription)
+            }
         }
     }
 
@@ -394,7 +510,8 @@ final class PlayerModel {
     }
 
     private func tick() {
-        guard let engine, !closed else { return }
+        // Between episodes the old stream is still loaded: wait for the new one.
+        guard let engine, !closed, !routes.isEmpty else { return }
         let status = engine.status
         let now = Date()
         let pos = engine.currentSeconds
@@ -402,7 +519,7 @@ final class PlayerModel {
         if dur > 0 { duration = dur } else if let rt = runTimeTicks, duration == 0 { duration = Ticks.toSeconds(rt) }
 
         if !hasPlayedAnything, now.timeIntervalSince(routeOpenedAt) > Self.slowOpenNotice {
-            openingMessage = "Il server ci sta mettendo un po'…"
+            openingMessage = "Ancora un attimo…"
         }
 
         if pos > 0, abs(pos - lastSeenPosition) > 0.2 {
@@ -431,8 +548,12 @@ final class PlayerModel {
             }
             return
         case .ended:
-            phase = .ended
             position = duration
+            if let next = upNext, !upNextDismissed {
+                playNext(next)
+                return
+            }
+            phase = .ended
             report(.stopped)
             tickTask?.cancel()
             return
@@ -443,6 +564,7 @@ final class PlayerModel {
         if !startedReported, hasPlayedAnything {
             startedReported = true
             report(.start)
+            findNextEpisode()
         }
 
         // Stall watchdog: we want to play, but time has not moved.
@@ -487,6 +609,7 @@ final class PlayerModel {
         }
 
         if hasPlayedAnything { refreshTracks() }
+        updateUpNext()
 
         // PiP asked for: start it as soon as the Apple player is ready.
         if pendingPiP, hasPlayedAnything, engine.supportsPiP {
