@@ -40,6 +40,11 @@ final class PlayerModel {
     /// Seconds left when the "next episode" card shows, nil when hidden.
     private(set) var upNextCountdown: Int?
     @ObservationIgnored private var upNextDismissed = false
+    @ObservationIgnored private var upNextLookup: Task<Void, Never>?
+    @ObservationIgnored private var upNextLastTry = Date.distantPast
+    /// The series has no episode after this one (checked with the server).
+    @ObservationIgnored private var upNextNone = false
+    @ObservationIgnored private var endLookupStarted = false
     /// Show the card this long before the end (the server has no credits markers).
     static let upNextLead: Double = 30
 
@@ -364,14 +369,21 @@ final class PlayerModel {
 
     // MARK: Next episode
 
+    /// Asks the server for the episode after this one. Retried every 20 s
+    /// until it answers (a failed request used to leave the card off for the
+    /// whole episode, and the player closed at the end).
     private func findNextEpisode() {
-        guard item.isEpisode, upNext == nil else { return }
+        guard item.isEpisode, upNext == nil, !upNextNone, upNextLookup == nil else { return }
+        upNextLastTry = Date()
         let current = item
         let api = api
-        Task { [weak self] in
-            let next = try? await api.nextEpisode(after: current)
-            guard let self, self.item.id == current.id else { return }
-            self.upNext = next
+        upNextLookup = Task { [weak self] in
+            let result: BaseItem??
+            do { result = .some(try await api.nextEpisode(after: current)) } catch { result = nil }
+            guard let self else { return }
+            self.upNextLookup = nil
+            guard self.item.id == current.id, let answer = result else { return }
+            if let next = answer { self.upNext = next } else { self.upNextNone = true }
         }
     }
 
@@ -416,6 +428,11 @@ final class PlayerModel {
         upNext = nil
         upNextCountdown = nil
         upNextDismissed = false
+        upNextNone = false
+        upNextLookup?.cancel()
+        upNextLookup = nil
+        upNextLastTry = .distantPast
+        endLookupStarted = false
         routes = []
         routeIndex = 0
         playSessionId = nil
@@ -687,6 +704,27 @@ final class PlayerModel {
                 playNext(next)
                 return
             }
+            // An episode whose next one is not known yet: ask now, then go on.
+            if item.isEpisode, !upNextDismissed, !upNextNone, !endLookupStarted {
+                endLookupStarted = true
+                phase = .preparing
+                openingMessage = "Prossimo episodio…"
+                let current = item
+                let api = api
+                Task { [weak self] in
+                    let next = try? await api.nextEpisode(after: current)
+                    guard let self, !self.closed, self.item.id == current.id else { return }
+                    if let next {
+                        self.playNext(next)
+                    } else {
+                        self.phase = .ended
+                        self.report(.stopped)
+                        self.tickTask?.cancel()
+                    }
+                }
+                return
+            }
+            if endLookupStarted { return }  // waiting for the answer
             phase = .ended
             report(.stopped)
             tickTask?.cancel()
@@ -743,6 +781,10 @@ final class PlayerModel {
         }
 
         if hasPlayedAnything { refreshTracks() }
+        if hasPlayedAnything, item.isEpisode, upNext == nil, !upNextNone,
+           now.timeIntervalSince(upNextLastTry) > 20 {
+            findNextEpisode()
+        }
         updateUpNext()
         updateHandoff(now: now)
 

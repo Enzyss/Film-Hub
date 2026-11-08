@@ -62,10 +62,38 @@ final class DecodingTests: XCTestCase {
         XCTAssertEqual(item.backdropImageTags, ["b1"])
     }
 
-    func testPlayedItemStartsFromZero() throws {
-        let json = #"{"Id":"m","UserData":{"PlaybackPositionTicks":500,"Played":true}}"#.data(using: .utf8)!
+    func testPlayedItemWithoutPositionStartsFromZero() throws {
+        let json = #"{"Id":"m","UserData":{"PlaybackPositionTicks":0,"Played":true}}"#.data(using: .utf8)!
         let item = try JellyfinCoding.decoder().decode(BaseItem.self, from: json)
         XCTAssertEqual(item.resumeSeconds, 0)
+    }
+
+    /// Real answer from the user's server: an episode being watched again is
+    /// "Played" and still has its position (4:50). It must resume there.
+    func testRewatchedEpisodeResumes() throws {
+        let json = #"{"Id":"f725","Type":"Episode","SeriesId":"b32a","RunTimeTicks":18450880000,"UserData":{"PlayedPercentage":15.75,"PlaybackPositionTicks":2906239999,"PlayCount":2,"Played":true}}"#.data(using: .utf8)!
+        let item = try JellyfinCoding.decoder().decode(BaseItem.self, from: json)
+        XCTAssertEqual(item.resumeSeconds, 290.6, accuracy: 0.1)
+    }
+
+    /// The next-episode answer as the user's server sends it (trimmed).
+    func testDecodesNextEpisodeAnswer() throws {
+        let json = """
+        {"Items":[{"Name":"Valerie è a casa da sola","Id":"f725","Container":"mkv","RunTimeTicks":18450880000,
+          "IndexNumber":6,"ParentIndexNumber":3,"IsFolder":false,"Type":"Episode",
+          "UserData":{"PlayedPercentage":15.7,"PlaybackPositionTicks":2906239999,"PlayCount":2,"IsFavorite":false,
+                      "LastPlayedDate":"2026-11-03T22:26:26.1767519Z","Played":true,"Key":"7538","ItemId":"f725"},
+          "SeriesName":"The Comeback","SeriesId":"b32a","SeasonId":"008e","SeriesPrimaryImageTag":"c9dc",
+          "ImageTags":{"Primary":"2f4b"},
+          "ImageBlurHashes":{"Primary":{"2f4b":"W[I}Y9"},"Thumb":{"c9dc":"W}N,"}},
+          "ParentThumbItemId":"b32a","ParentThumbImageTag":"c9dc","LocationType":"FileSystem","MediaType":"Video"},
+         {"Name":"Valerie a caccia di verità","Id":"b149","Type":"Episode","IndexNumber":7,"ParentIndexNumber":3,
+          "SeriesId":"b32a","UserData":{"PlaybackPositionTicks":0,"Played":true}}],
+         "TotalRecordCount":12,"StartIndex":0}
+        """.data(using: .utf8)!
+        let result = try JellyfinCoding.decoder().decode(QueryResult<BaseItem>.self, from: json)
+        XCTAssertEqual(result.items?.map(\.id), ["f725", "b149"])
+        XCTAssertEqual(result.items?.last?.episodeLabel, "S3 · E7")
     }
 
     func testDecodesPlaybackInfo() throws {

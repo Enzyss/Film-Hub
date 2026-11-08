@@ -218,10 +218,11 @@ public struct BaseItem: Codable, Hashable, Identifiable, Sendable {
         return productionYear.map(String.init)
     }
 
-    /// Seconds to resume from, or 0 to start from the beginning.
+    /// Seconds to resume from, or 0 to start from the beginning. A saved
+    /// position wins even on a watched item: on the user's server, episodes
+    /// being watched again are "Played" and still carry where they stopped.
     public var resumeSeconds: Double {
-        guard userData?.played != true,
-              let ticks = userData?.playbackPositionTicks, ticks > 0 else { return 0 }
+        guard let ticks = userData?.playbackPositionTicks, ticks > 0 else { return 0 }
         return Ticks.toSeconds(ticks)
     }
 
