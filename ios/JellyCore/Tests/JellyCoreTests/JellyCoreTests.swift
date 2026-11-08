@@ -400,3 +400,68 @@ final class GenreRowTests: XCTestCase {
         XCTAssertEqual(items.first { $0.name == "sortBy" }?.value, "PremiereDate,SortName")
     }
 }
+
+final class AnimeTests: XCTestCase {
+    // The user's libraries, as /UserViews names them.
+    let views: [(name: String, id: String)] = [
+        ("Anime", "a1"), ("Anime ENG", "a2"), ("Anime SUB ITA", "a3"),
+        ("Hentai ENG", "h1"), ("Hentai ITA", "h2"), ("Film", "f1"), ("Serie TV", "s1"),
+    ]
+
+    func testFindsAnimeLibrariesWithoutAdultOnes() {
+        let libs = AnimeLibraries.from(views: views)
+        XCTAssertEqual(libs.all, ["a1", "a2", "a3"])
+        XCTAssertEqual(libs.dubbed, "a1")
+        XCTAssertEqual(libs.subbed, "a3")
+    }
+
+    func testAnimeRowsReadTheAnimeLibraries() {
+        let rows = Catalog.rows(for: .anime, anime: AnimeLibraries.from(views: views))
+        XCTAssertEqual(rows.first?.title, "Aggiunti di recente")
+        XCTAssertEqual(rows.first?.query.parentIds, ["a1", "a2", "a3"])
+        XCTAssertTrue(rows.contains { $0.title == "Crunchyroll" })
+        XCTAssertTrue(rows.contains { $0.title == "Commedia" })
+        XCTAssertTrue(rows.contains { $0.title == "Doppiati in italiano" && $0.query.parentIds == ["a1"] })
+        let films = rows.first { $0.title == "Film anime" }
+        XCTAssertEqual(films?.query.itemTypes, ["Movie"])
+        XCTAssertTrue(films?.query.studios.contains("Studio Ghibli") == true)
+        XCTAssertEqual(Set(rows.map(\.id)).count, rows.count)
+        XCTAssertFalse(rows.contains { $0.query.parentIds.contains("h1") })
+    }
+
+    func testWithoutAnimeLibrariesFallsBackToGenre() {
+        let rows = Catalog.rows(for: .anime)
+        XCTAssertEqual(rows.first?.query.genres, ["Anime"])
+        XCTAssertFalse(rows.contains { $0.title == "Doppiati in italiano" })
+    }
+
+    func testQueryAddsParentId() {
+        let items = CatalogQuery(itemTypes: ["Series"]).queryItems(userId: "u", startIndex: 0, limit: 5, parentId: "a3")
+        XCTAssertEqual(items.first { $0.name == "parentId" }?.value, "a3")
+    }
+
+    func testInterleaveMixesLibraries() {
+        let a = [BaseItem(id: "a1"), BaseItem(id: "a2"), BaseItem(id: "a3")]
+        let b = [BaseItem(id: "b1")]
+        XCTAssertEqual(CatalogCursor.interleave([a, b]).map(\.id), ["a1", "b1", "a2", "a3"])
+    }
+
+    func testCursorFinishes() {
+        let q = CatalogQuery(itemTypes: ["Series"], parentIds: ["a1", "a3"])
+        var c = CatalogCursor.start
+        XCTAssertFalse(c.isFinished(for: q))
+        c.exhausted = ["a1", "a3"]
+        XCTAssertTrue(c.isFinished(for: q))
+    }
+
+    func testVersionLabelsFromFolders() throws {
+        let json = """
+        [{"Id":"1","Type":"Series","Path":"/Anime/Naruto (2002)"},
+         {"Id":"2","Type":"Series","Path":"/AnimeSub/Naruto (2002)"},
+         {"Id":"3","Type":"Series","Path":"/AnimeEng/Naruto"},
+         {"Id":"4","Type":"Movie","Path":"/Film4K/Matrix (1999)/Matrix.mkv"}]
+        """.data(using: .utf8)!
+        let items = try JellyfinCoding.decoder().decode([BaseItem].self, from: json)
+        XCTAssertEqual(items.map(\.versionLabel), ["Doppiato ITA", "Sub ITA", "Inglese", "4K"])
+    }
+}

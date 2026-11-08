@@ -258,10 +258,37 @@ public struct JellyfinAPI: Sendable {
 
     // MARK: Catalog
 
-    public func items(_ query: CatalogQuery, startIndex: Int = 0, limit: Int = 24) async throws -> [BaseItem] {
+    /// The first page of a query (one row of a tab).
+    public func items(_ query: CatalogQuery, limit: Int = 24) async throws -> [BaseItem] {
+        try await page(query, cursor: .start, limit: limit).items
+    }
+
+    /// One page of a query, and where the next one starts. A query over
+    /// several libraries asks each one at the same time and mixes the results.
+    public func page(_ query: CatalogQuery, cursor: CatalogCursor, limit: Int) async throws
+        -> (items: [BaseItem], next: CatalogCursor) {
         let uid = try requireUser()
-        return try await get(QueryResult<BaseItem>.self, "/Items",
-                             query.queryItems(userId: uid, startIndex: startIndex, limit: limit)).items ?? []
+        let active = CatalogCursor.keys(for: query).filter { !cursor.exhausted.contains($0) }
+        guard !active.isEmpty else { return ([], cursor) }
+        let per = max(1, Int((Double(limit) / Double(active.count)).rounded(.up)))
+        let lists = try await withThrowingTaskGroup(of: (Int, [BaseItem]).self) { group in
+            for (i, key) in active.enumerated() {
+                let items = query.queryItems(userId: uid, startIndex: cursor.offsets[key] ?? 0, limit: per,
+                                             parentId: key.isEmpty ? nil : key)
+                group.addTask {
+                    (i, try await self.get(QueryResult<BaseItem>.self, "/Items", items).items ?? [])
+                }
+            }
+            var out = [[BaseItem]](repeating: [], count: active.count)
+            for try await (i, list) in group { out[i] = list }
+            return out
+        }
+        var next = cursor
+        for (i, key) in active.enumerated() {
+            next.offsets[key, default: 0] += lists[i].count
+            if lists[i].count < per { next.exhausted.insert(key) }
+        }
+        return (CatalogCursor.interleave(lists), next)
     }
 
     static let detailFields = "Overview,Genres,People,Studios,ProviderIds,Taglines,ChildCount,MediaSources,PrimaryImageAspectRatio"
@@ -319,16 +346,18 @@ public struct JellyfinAPI: Sendable {
     }
 
     /// Other copies of the same film in other libraries (HD, 4K...).
+    /// Other copies of the same title in other libraries: HD and 4K films,
+    /// dubbed and subtitled anime.
     public func versions(of item: BaseItem) async throws -> [BaseItem] {
-        guard item.isMovie, let name = item.name, !name.isEmpty else { return [item] }
+        guard item.isMovie || item.isSeries, let name = item.name, !name.isEmpty else { return [item] }
         let uid = try requireUser()
         var q: [URLQueryItem] = [
             URLQueryItem(name: "userId", value: uid),
             URLQueryItem(name: "recursive", value: "true"),
-            URLQueryItem(name: "includeItemTypes", value: "Movie"),
+            URLQueryItem(name: "includeItemTypes", value: item.isMovie ? "Movie" : "Series"),
             URLQueryItem(name: "searchTerm", value: name),
             URLQueryItem(name: "limit", value: "12"),
-            URLQueryItem(name: "fields", value: "ProviderIds,MediaSources"),
+            URLQueryItem(name: "fields", value: item.isMovie ? "ProviderIds,MediaSources,Path" : "ProviderIds,Path"),
             URLQueryItem(name: "enableUserData", value: "true"),
         ]
         if let y = item.productionYear { q.append(URLQueryItem(name: "years", value: String(y))) }
@@ -340,7 +369,28 @@ public struct JellyfinAPI: Sendable {
     /// Title search across films and series (~0.8 s on the user's server).
     public func search(_ term: String, limit: Int = 40) async throws -> [BaseItem] {
         try await items(CatalogQuery(itemTypes: ["Movie", "Series"], sortBy: "SortName", descending: false,
-                                     searchTerm: term), limit: limit).deduplicated()
+                                     searchTerm: term, extraFields: ["ParentId", "Studios"]),
+                        limit: limit).deduplicated()
+    }
+
+    /// The libraries in the user's home screen (name, id, kind).
+    public func views() async throws -> [BaseItem] {
+        let uid = try requireUser()
+        return try await get(QueryResult<BaseItem>.self, "/UserViews", [URLQueryItem(name: "userId", value: uid)]).items ?? []
+    }
+
+    /// The folder id the series of a library report as their ParentId.
+    public func folderId(ofLibrary id: String) async throws -> String? {
+        let uid = try requireUser()
+        return try await get(QueryResult<BaseItem>.self, "/Items", [
+            URLQueryItem(name: "userId", value: uid),
+            URLQueryItem(name: "parentId", value: id),
+            URLQueryItem(name: "recursive", value: "true"),
+            URLQueryItem(name: "includeItemTypes", value: "Series,Movie"),
+            URLQueryItem(name: "limit", value: "1"),
+            URLQueryItem(name: "fields", value: "ParentId"),
+            URLQueryItem(name: "enableTotalRecordCount", value: "false"),
+        ]).items?.first?.parentId
     }
 
     public func markPlayed(itemId: String, played: Bool) async throws {

@@ -129,6 +129,8 @@ public struct BaseItem: Codable, Hashable, Identifiable, Sendable {
     public var childCount: Int?
     public var endDate: String?
     public var status: String?
+    public var parentId: String?
+    public var path: String?
 
     public init(id: String, name: String? = nil, type: String? = nil) {
         self.id = id
@@ -164,6 +166,22 @@ public struct BaseItem: Codable, Hashable, Identifiable, Sendable {
     }
 
     public var isPlayed: Bool { userData?.played == true }
+
+    /// The top folder on the server's disk ("Anime", "AnimeSub", "Film4K"):
+    /// tells versions of the same title apart.
+    public var libraryFolder: String? {
+        guard let path, !path.isEmpty else { return nil }
+        return path.split(separator: "/").first.map(String.init)
+    }
+
+    /// "Doppiato", "Sub ITA", "ENG", "4K"... from the folder name.
+    public var versionLabel: String? {
+        guard let f = libraryFolder?.lowercased() else { return nil }
+        if f.contains("sub") { return "Sub ITA" }
+        if f.contains("eng") { return "Inglese" }
+        if f.contains("4k") { return "4K" }
+        return isSeries ? "Doppiato ITA" : nil
+    }
 
     /// "2008 · 5 stagioni" or "1999 · 2 h 16 min".
     public var metaLine: String {

@@ -15,11 +15,19 @@ public struct CatalogQuery: Codable, Hashable, Sendable {
     public var knownTitlesOnly: Bool = false
     /// Hide titles dated in the future (announced, not yet out).
     public var releasedOnly: Bool = false
+    /// Libraries to read from. Empty = the whole server. Jellyfin takes one
+    /// library per request, so several mean several requests, merged.
+    public var parentIds: [String] = []
+    /// Extra fields beyond the card ones (search asks for ParentId and Studios).
+    public var extraFields: [String] = []
 
     public init(itemTypes: [String], genres: [String] = [], studios: [String] = [],
                 sortBy: String = "DateCreated,SortName", descending: Bool = true,
                 unplayedOnly: Bool = false, minCommunityRating: Double? = nil, searchTerm: String? = nil,
-                knownTitlesOnly: Bool = false, releasedOnly: Bool = false) {
+                knownTitlesOnly: Bool = false, releasedOnly: Bool = false,
+                parentIds: [String] = [], extraFields: [String] = []) {
+        self.parentIds = parentIds
+        self.extraFields = extraFields
         self.knownTitlesOnly = knownTitlesOnly
         self.releasedOnly = releasedOnly
         self.itemTypes = itemTypes
@@ -36,7 +44,9 @@ public struct CatalogQuery: Codable, Hashable, Sendable {
     /// Never MediaSources: on the user's server that makes a 25-item page take 4.5 s.
     public static let cardFields = "ProviderIds,PrimaryImageAspectRatio,ChildCount,Genres"
 
-    public func queryItems(userId: String, startIndex: Int, limit: Int, now: Date = Date()) -> [URLQueryItem] {
+    public func queryItems(userId: String, startIndex: Int, limit: Int, parentId: String? = nil,
+                           now: Date = Date()) -> [URLQueryItem] {
+        let fields = ([Self.cardFields] + extraFields).joined(separator: ",")
         var q: [URLQueryItem] = [
             URLQueryItem(name: "userId", value: userId),
             URLQueryItem(name: "recursive", value: "true"),
@@ -45,7 +55,7 @@ public struct CatalogQuery: Codable, Hashable, Sendable {
             URLQueryItem(name: "sortOrder", value: descending ? "Descending" : "Ascending"),
             URLQueryItem(name: "startIndex", value: String(startIndex)),
             URLQueryItem(name: "limit", value: String(limit)),
-            URLQueryItem(name: "fields", value: Self.cardFields),
+            URLQueryItem(name: "fields", value: fields),
             URLQueryItem(name: "enableUserData", value: "true"),
             URLQueryItem(name: "imageTypeLimit", value: "1"),
             URLQueryItem(name: "enableImageTypes", value: "Primary,Backdrop,Thumb"),
@@ -57,12 +67,43 @@ public struct CatalogQuery: Codable, Hashable, Sendable {
         if let r = minCommunityRating { q.append(URLQueryItem(name: "minCommunityRating", value: String(r))) }
         if let s = searchTerm, !s.isEmpty { q.append(URLQueryItem(name: "searchTerm", value: s)) }
         if knownTitlesOnly { q.append(URLQueryItem(name: "hasTmdbId", value: "true")) }
+        if let parentId { q.append(URLQueryItem(name: "parentId", value: parentId)) }
         if releasedOnly {
             let f = ISO8601DateFormatter()
             f.formatOptions = [.withFullDate]
             q.append(URLQueryItem(name: "maxPremiereDate", value: f.string(from: now)))
         }
         return q
+    }
+}
+
+/// Where the next page of a query starts, per library.
+public struct CatalogCursor: Hashable, Sendable {
+    public var offsets: [String: Int] = [:]
+    public var exhausted: Set<String> = []
+
+    public init() {}
+
+    public static let start = CatalogCursor()
+
+    /// Library keys of a query: "" stands for the whole server.
+    public static func keys(for query: CatalogQuery) -> [String] {
+        query.parentIds.isEmpty ? [""] : query.parentIds
+    }
+
+    public func isFinished(for query: CatalogQuery) -> Bool {
+        Self.keys(for: query).allSatisfy { exhausted.contains($0) }
+    }
+
+    /// One from each library in turn, so rows mix them instead of listing
+    /// one library first.
+    public static func interleave(_ lists: [[BaseItem]]) -> [BaseItem] {
+        var out: [BaseItem] = []
+        let longest = lists.map(\.count).max() ?? 0
+        for i in 0..<longest {
+            for list in lists where i < list.count { out.append(list[i]) }
+        }
+        return out
     }
 }
 
@@ -84,12 +125,13 @@ public struct CatalogRow: Codable, Hashable, Sendable, Identifiable {
 }
 
 public enum CatalogKind: String, CaseIterable, Codable, Sendable {
-    case movies, series, documentaries
+    case movies, series, anime, documentaries
 
     public var title: String {
         switch self {
         case .movies: return "Film"
         case .series: return "Serie TV"
+        case .anime: return "Anime"
         case .documentaries: return "Documentari"
         }
     }
@@ -97,10 +139,57 @@ public enum CatalogKind: String, CaseIterable, Codable, Sendable {
     var itemTypes: [String] {
         switch self {
         case .movies: return ["Movie"]
-        case .series: return ["Series"]
+        case .series, .anime: return ["Series"]
         case .documentaries: return ["Movie", "Series"]
         }
     }
+}
+
+/// The user's anime libraries, found by name on the server ("Anime",
+/// "Anime SUB ITA", "Anime ENG"), adult ones left out.
+public struct AnimeLibraries: Codable, Hashable, Sendable {
+    public var all: [String] = []
+    public var dubbed: String?
+    public var subbed: String?
+    /// Folder ids the series in those libraries report as ParentId (they
+    /// differ from the library ids): used to tell anime apart in search.
+    public var folderIds: [String] = []
+
+    public init(all: [String] = [], dubbed: String? = nil, subbed: String? = nil, folderIds: [String] = []) {
+        self.all = all
+        self.dubbed = dubbed
+        self.subbed = subbed
+        self.folderIds = folderIds
+    }
+
+    public static let none = AnimeLibraries()
+
+    public static func isAnimeLibrary(name: String) -> Bool {
+        let n = name.lowercased()
+        return n.contains("anime") && !n.contains("hentai")
+    }
+
+    /// Picks the libraries from the user's views (name and id).
+    public static func from(views: [(name: String, id: String)]) -> AnimeLibraries {
+        let anime = views.filter { isAnimeLibrary(name: $0.name) }
+        let subbed = anime.first { $0.name.lowercased().contains("sub") }?.id
+        let dubbed = anime.first {
+            let n = $0.name.lowercased()
+            return !n.contains("sub") && !n.contains("eng")
+        }?.id
+        return AnimeLibraries(all: anime.map(\.id), dubbed: dubbed, subbed: subbed)
+    }
+}
+
+/// Japanese animation studios on the user's server: how anime films are found
+/// (they sit in "Film Animati" next to Pixar and DreamWorks).
+public enum AnimeStudios {
+    public static let all = [
+        "Toei Animation", "Studio Ghibli", "MAPPA", "Kyoto Animation", "Madhouse", "Production I.G",
+        "BONES", "SUNRISE", "TMS Entertainment", "Pierrot", "WIT STUDIO", "ufotable", "CoMix Wave Films",
+        "A-1 Pictures", "CloverWorks", "TRIGGER", "Aniplex", "Toho Animation", "SHAFT", "David Production",
+        "Science SARU",
+    ]
 }
 
 /// The user's server mixes Italian and English genre names ("Commedia" and
@@ -140,6 +229,9 @@ public struct Platform: Sendable, Identifiable {
     public var title: String
     public var studios: [String]
 
+    public static let crunchyroll = Platform(id: "crunchyroll", title: "Crunchyroll",
+                                             studios: ["Crunchyroll", "Crunchyroll Channel"])
+
     public static let all: [Platform] = [
         Platform(id: "netflix", title: "Netflix",
                  studios: ["Netflix", "Netflix International Pictures", "Netflix Animation Studios"]),
@@ -165,9 +257,11 @@ public struct Platform: Sendable, Identifiable {
 
 public enum Catalog {
     /// Rows for a tab, top to bottom.
-    public static func rows(for kind: CatalogKind) -> [CatalogRow] {
+    public static func rows(for kind: CatalogKind, anime: AnimeLibraries = .none) -> [CatalogRow] {
         let types = kind.itemTypes
         var rows: [CatalogRow] = []
+
+        if kind == .anime { return animeRows(anime) }
 
         if kind == .documentaries {
             let docs = GenreGroup.documentary
@@ -215,6 +309,58 @@ public enum Catalog {
                                    query: CatalogQuery(itemTypes: types, genres: g.names,
                                                        sortBy: "PremiereDate,SortName", minCommunityRating: 6.5,
                                                        knownTitlesOnly: true, releasedOnly: true)))
+        }
+        return rows
+    }
+
+    /// Genres that make sense for anime, from the ones the anime libraries use.
+    static let animeGenreTitles: Set<String> = [
+        "Azione", "Commedia", "Drammatici", "Fantascienza", "Fantasy", "Avventura", "Romantici",
+        "Mistero", "Horror", "Thriller", "Crime",
+    ]
+
+    static func animeRows(_ libs: AnimeLibraries) -> [CatalogRow] {
+        // Without anime libraries, fall back to the "Anime" genre tag.
+        let parents = libs.all
+        let base = parents.isEmpty
+            ? CatalogQuery(itemTypes: ["Series"], genres: ["Anime"])
+            : CatalogQuery(itemTypes: ["Series"], parentIds: parents)
+        func q(_ edit: (inout CatalogQuery) -> Void) -> CatalogQuery {
+            var c = base
+            edit(&c)
+            return c
+        }
+        var rows: [CatalogRow] = []
+        rows.append(CatalogRow(id: "anime-recent", title: "Aggiunti di recente", query: base, style: .wide))
+        rows.append(CatalogRow(id: "anime-new", title: "Ultime uscite", query: q {
+            $0.sortBy = "PremiereDate,SortName"; $0.releasedOnly = true; $0.knownTitlesOnly = true
+        }))
+        if let d = libs.dubbed {
+            rows.append(CatalogRow(id: "anime-dub", title: "Doppiati in italiano",
+                                   query: CatalogQuery(itemTypes: ["Series"], parentIds: [d])))
+        }
+        if let s = libs.subbed {
+            rows.append(CatalogRow(id: "anime-sub", title: "Sottotitolati in italiano",
+                                   query: CatalogQuery(itemTypes: ["Series"], parentIds: [s])))
+        }
+        rows.append(CatalogRow(id: "anime-movies", title: "Film anime",
+                               query: CatalogQuery(itemTypes: ["Movie"], studios: AnimeStudios.all,
+                                                   sortBy: "PremiereDate,SortName", releasedOnly: true)))
+        rows.append(CatalogRow(id: "anime-discover", title: "Da non perdere", query: q {
+            $0.sortBy = "Random"; $0.unplayedOnly = true; $0.minCommunityRating = 7.5; $0.knownTitlesOnly = true
+        }))
+        for p in [Platform.crunchyroll] + Platform.all.filter({ ["netflix", "disney", "prime"].contains($0.id) }) {
+            rows.append(CatalogRow(id: "anime-p-\(p.id)", title: p.title, query: q { $0.studios = p.studios }))
+        }
+        rows.append(CatalogRow(id: "anime-ghibli", title: "Studio Ghibli",
+                               query: CatalogQuery(itemTypes: ["Movie", "Series"], studios: ["Studio Ghibli"],
+                                                   sortBy: "PremiereDate,SortName")))
+        for g in GenreGroup.all where animeGenreTitles.contains(g.title) {
+            rows.append(CatalogRow(id: "anime-g-\(g.title)", title: g.title, query: q {
+                $0.genres = g.names + (g.title == "Fantasy" ? ["Sci-Fi & Fantasy"] : [])
+                $0.sortBy = "PremiereDate,SortName"; $0.minCommunityRating = 6.5
+                $0.knownTitlesOnly = true; $0.releasedOnly = true
+            }))
         }
         return rows
     }
