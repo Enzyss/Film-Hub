@@ -27,9 +27,10 @@ struct SearchView: View {
                             .frame(maxWidth: .infinity)
                             .padding(Theme.Space.xxl)
                     } else {
-                        group("Film", results.filter { $0.isMovie && !isDocumentary($0) })
-                        group("Serie TV", results.filter { $0.isSeries && !isDocumentary($0) })
-                        group("Documentari", results.filter(isDocumentary))
+                        group("Anime", results.filter(isAnime))
+                        group("Film", results.filter { $0.isMovie && !isDocumentary($0) && !isAnime($0) })
+                        group("Serie TV", results.filter { $0.isSeries && !isDocumentary($0) && !isAnime($0) })
+                        group("Documentari", results.filter { isDocumentary($0) && !isAnime($0) })
                     }
                 }
                 .padding(.vertical, Theme.Space.l)
@@ -40,7 +41,7 @@ struct SearchView: View {
             .background(Theme.Colors.background)
             .navigationTitle("Cerca")
             .searchable(text: $text, placement: .navigationBarDrawer(displayMode: .always),
-                        prompt: "Film, serie, documentari")
+                        prompt: "Film, serie, anime, documentari")
             .autocorrectionDisabled()
             .onSubmit(of: .search) { remember(text) }
             .task(id: text) {
@@ -52,6 +53,14 @@ struct SearchView: View {
             }
             .withTitleDestinations()
         }
+    }
+
+    /// From an anime library, made by a Japanese animation studio, or tagged "Anime".
+    private func isAnime(_ item: BaseItem) -> Bool {
+        if let p = item.parentId, app.animeLibraries.folderIds.contains(p) { return true }
+        if (item.genres ?? []).contains("Anime") { return true }
+        let studios = Set((item.studios ?? []).compactMap(\.name))
+        return item.isMovie && !studios.isDisjoint(with: AnimeStudios.all)
     }
 
     private func isDocumentary(_ item: BaseItem) -> Bool {

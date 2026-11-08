@@ -19,9 +19,9 @@ final class CatalogModel {
     /// A platform or genre with fewer titles than this on the server is hidden.
     static let minRowItems = 4
 
-    init(kind: CatalogKind) {
+    init(kind: CatalogKind, anime: AnimeLibraries = .none) {
         self.kind = kind
-        self.rows = Catalog.rows(for: kind)
+        self.rows = Catalog.rows(for: kind, anime: anime)
         if let cached = JSONFile.read([String: [BaseItem]].self, from: CachePaths.catalog(kind.rawValue)) {
             content = cached
             loaded = Set(cached.keys)
@@ -74,16 +74,51 @@ final class CatalogModel {
     }
 }
 
+/// A tab with its own navigation.
 struct BrowseView: View {
+    let kind: CatalogKind
     @Environment(AppModel.self) private var app
-    @State private var model: CatalogModel
-
-    init(kind: CatalogKind) {
-        _model = State(initialValue: CatalogModel(kind: kind))
-    }
 
     var body: some View {
         NavigationStack {
+            BrowseTab(kind: kind)
+                .withTitleDestinations()
+        }
+    }
+}
+
+/// Picks the rows: anime need the server's anime libraries, found at sign-in.
+struct BrowseTab: View {
+    let kind: CatalogKind
+    @Environment(AppModel.self) private var app
+
+    var body: some View {
+        if kind == .anime {
+            if app.animeLibraries.all.isEmpty && !app.librariesLoaded {
+                ProgressView()
+                    .tint(Theme.Colors.accent)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Theme.Colors.background)
+                    .navigationTitle(kind.title)
+            } else {
+                BrowseContent(kind: kind, anime: app.animeLibraries)
+                    .id(app.animeLibraries)  // new rows if the libraries change
+            }
+        } else {
+            BrowseContent(kind: kind)
+        }
+    }
+}
+
+struct BrowseContent: View {
+    @Environment(AppModel.self) private var app
+    @State private var model: CatalogModel
+
+    init(kind: CatalogKind, anime: AnimeLibraries = .none) {
+        _model = State(initialValue: CatalogModel(kind: kind, anime: anime))
+    }
+
+    var body: some View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: Theme.Space.xxl) {
                     if model.heroItems.isEmpty {
@@ -115,8 +150,6 @@ struct BrowseView: View {
             .toolbarBackground(.hidden, for: .navigationBar)
             .refreshable { await model.load(api: app.api, force: true) }
             .task { await model.load(api: app.api) }
-            .withTitleDestinations()
-        }
     }
 }
 
@@ -127,7 +160,7 @@ struct SeeAllView: View {
 
     @State private var items: [BaseItem] = []
     @State private var seen = Set<String>()
-    @State private var nextIndex = 0
+    @State private var cursor = CatalogCursor.start
     @State private var reachedEnd = false
     @State private var loading = false
     @State private var error: String?
@@ -200,7 +233,7 @@ struct SeeAllView: View {
     private func reset() async {
         items = []
         seen = []
-        nextIndex = 0
+        cursor = .start
         reachedEnd = false
         error = nil
         await loadMore()
@@ -211,10 +244,11 @@ struct SeeAllView: View {
         loading = true
         defer { loading = false }
         do {
-            let page = try await api.items(query, startIndex: nextIndex, limit: Self.pageSize)
-            nextIndex += page.count
-            if page.count < Self.pageSize { reachedEnd = true }
-            let fresh = page.filter { seen.insert($0.dedupeKey).inserted }
+            let q = self.query
+            let page = try await api.page(q, cursor: cursor, limit: Self.pageSize)
+            cursor = page.next
+            if page.next.isFinished(for: q) { reachedEnd = true }
+            let fresh = page.items.filter { seen.insert($0.dedupeKey).inserted }
             items.append(contentsOf: fresh)
             error = nil
         } catch is CancellationError {
@@ -230,5 +264,6 @@ extension View {
     func withTitleDestinations() -> some View {
         navigationDestination(for: BaseItem.self) { DetailView(item: $0) }
             .navigationDestination(for: CatalogRow.self) { SeeAllView(row: $0) }
+            .navigationDestination(for: CatalogKind.self) { BrowseTab(kind: $0) }
     }
 }

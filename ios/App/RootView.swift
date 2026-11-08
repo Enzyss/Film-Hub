@@ -37,8 +37,8 @@ struct MainTabs: View {
                 .tabItem { Label("Film", systemImage: "film.fill") }
             BrowseView(kind: .series)
                 .tabItem { Label("Serie TV", systemImage: "tv.fill") }
-            BrowseView(kind: .documentaries)
-                .tabItem { Label("Documentari", systemImage: "globe.europe.africa.fill") }
+            BrowseView(kind: .anime)
+                .tabItem { Label("Anime", systemImage: "sparkles") }
             SearchView()
                 .tabItem { Label("Cerca", systemImage: "magnifyingglass") }
         }

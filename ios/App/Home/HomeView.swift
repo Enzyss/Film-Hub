@@ -11,6 +11,8 @@ struct HomeView: View {
         NavigationStack(path: $path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: Theme.Space.xxl) {
+                    categories
+
                     if let error = model.errorMessage {
                         ErrorBanner(message: error) { Task { await reload() } }
                     }
@@ -39,6 +41,25 @@ struct HomeView: View {
             .refreshable { await reload() }
             .task(id: app.homeRefreshToken) { await reload() }
             .withTitleDestinations()
+        }
+    }
+
+    /// Shortcuts to sections without a tab of their own (five tabs fit).
+    private var categories: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: Theme.Space.s) {
+                NavigationLink(value: CatalogKind.documentaries) {
+                    Label("Documentari", systemImage: "globe.europe.africa.fill")
+                        .font(.footnote.weight(.semibold))
+                        .padding(.horizontal, Theme.Space.m)
+                        .padding(.vertical, Theme.Space.s)
+                        .background(Theme.Colors.surface)
+                        .foregroundStyle(Theme.Colors.textPrimary)
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, Theme.Space.l)
         }
     }
 

@@ -58,7 +58,12 @@ final class DetailModel {
             errorMessage = error.localizedDescription
         }
         if item.isSeries {
+            let current = item
+            async let found = api.versions(of: current)
             await loadSeries(api: api)
+            versions = (try? await found) ?? [item]
+            if !versions.contains(where: { $0.id == item.id }) { versions.insert(item, at: 0) }
+            selectedVersionId = item.id
         } else if item.isMovie {
             versions = (try? await api.versions(of: item)) ?? [item]
             if !versions.contains(where: { $0.id == item.id }) { versions.insert(item, at: 0) }
@@ -67,6 +72,22 @@ final class DetailModel {
             startPrefetch(api: api)
         }
         similar = (try? await similarItems) ?? []
+    }
+
+    /// Series: the dubbed, subtitled or English copy is a separate series on
+    /// the server, with its own episodes and progress. Opens that one.
+    func switchSeries(to version: BaseItem, api: JellyfinAPI?, audio: AudioPreference,
+                      subtitles: SubtitlePreference) async {
+        guard version.id != item.id else { return }
+        let others = versions
+        item = version
+        seasons = []
+        episodes = []
+        nextEpisode = nil
+        selectedSeasonId = nil
+        loadingDetail = true
+        await load(api: api, audio: audio, subtitles: subtitles)
+        if versions.count < others.count { versions = others }
     }
 
     func resetChoice(audio: AudioPreference, subtitles: SubtitlePreference) {

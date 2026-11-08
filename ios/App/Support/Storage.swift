@@ -9,6 +9,7 @@ enum AppPaths {
     static var account: URL { support.appendingPathComponent("account.json") }
     static var pendingProgress: URL { support.appendingPathComponent("pending-progress.json") }
     static var homeCache: URL { support.appendingPathComponent("home-cache.json") }
+    static var libraries: URL { support.appendingPathComponent("libraries.json") }
 }
 
 /// The signed-in account, minus the token (which lives in the Keychain).

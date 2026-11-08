@@ -117,6 +117,14 @@ struct DetailView: View {
                         Picker("Versione", selection: Binding(
                             get: { model.selectedVersionId ?? item.id },
                             set: { id in
+                                if item.isSeries {
+                                    guard let v = model.versions.first(where: { $0.id == id }) else { return }
+                                    Task {
+                                        await model.switchSeries(to: v, api: app.api, audio: app.audioPreference,
+                                                                 subtitles: app.subtitlePreference)
+                                    }
+                                    return
+                                }
                                 model.selectedVersionId = id
                                 model.resetChoice(audio: app.audioPreference, subtitles: app.subtitlePreference)
                                 if let api = app.api { model.startPrefetch(api: api) }
@@ -152,8 +160,9 @@ struct DetailView: View {
                  prefetched: model.prefetched())
     }
 
-    /// "4K · Dolby Vision", "1080p", "720p".
+    /// "4K · Dolby Vision", "1080p", "720p"; for series "Doppiato ITA", "Sub ITA".
     private func versionLabel(_ v: BaseItem) -> String {
+        if v.isSeries { return v.versionLabel ?? "Versione" }
         guard let video = v.mediaSources?.first?.videoStream else { return "Versione" }
         let h = video.height ?? 0
         let res = h >= 2000 ? "4K" : h >= 1000 ? "1080p" : h >= 700 ? "720p" : h > 0 ? "\(h)p" : "Video"
