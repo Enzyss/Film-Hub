@@ -435,6 +435,14 @@ final class PlayerModel {
             do {
                 try await self.prepareRoutes(startSeconds: self.position)
                 guard !self.closed, self.item.id == next.id else { return }
+                // In PiP the next episode stays on the Apple player, or the
+                // PiP window would close.
+                if self.isPiPActive, self.engine is AppleEngine,
+                   let i = self.routes.firstIndex(where: { !$0.usesVLC }) {
+                    let r = self.routes.remove(at: i)
+                    self.routes.insert(r, at: 0)
+                    self.handoffURL = nil
+                }
                 self.open(at: self.position)
             } catch {
                 self.phase = .failed(error.localizedDescription)
