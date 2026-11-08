@@ -48,19 +48,24 @@ struct HomeView: View {
     private var categories: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: Theme.Space.s) {
-                NavigationLink(value: CatalogKind.documentaries) {
-                    Label("Documentari", systemImage: "globe.europe.africa.fill")
-                        .font(.footnote.weight(.semibold))
-                        .padding(.horizontal, Theme.Space.m)
-                        .padding(.vertical, Theme.Space.s)
-                        .background(Theme.Colors.surface)
-                        .foregroundStyle(Theme.Colors.textPrimary)
-                        .clipShape(Capsule())
-                }
-                .buttonStyle(.plain)
+                chip(.anime, "Anime", "sparkles")
+                chip(.documentaries, "Documentari", "globe.europe.africa.fill")
             }
             .padding(.horizontal, Theme.Space.l)
         }
+    }
+
+    private func chip(_ kind: CatalogKind, _ title: String, _ icon: String) -> some View {
+        NavigationLink(value: kind) {
+            Label(title, systemImage: icon)
+                .font(.footnote.weight(.semibold))
+                .padding(.horizontal, Theme.Space.m)
+                .padding(.vertical, Theme.Space.s)
+                .background(Theme.Colors.surface)
+                .foregroundStyle(Theme.Colors.textPrimary)
+                .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
     }
 
     /// Episodes open their series' page.

@@ -271,22 +271,34 @@ public struct JellyfinAPI: Sendable {
         let active = CatalogCursor.keys(for: query).filter { !cursor.exhausted.contains($0) }
         guard !active.isEmpty else { return ([], cursor) }
         let per = max(1, Int((Double(limit) / Double(active.count)).rounded(.up)))
-        let lists = try await withThrowingTaskGroup(of: (Int, [BaseItem]).self) { group in
+        // One slow or failing library must not empty the whole row: its part
+        // is skipped (and asked again next page); only if all fail is it an error.
+        let results = await withTaskGroup(of: (Int, Result<[BaseItem], Error>).self) { group in
             for (i, key) in active.enumerated() {
                 let items = query.queryItems(userId: uid, startIndex: cursor.offsets[key] ?? 0, limit: per,
                                              parentId: key.isEmpty ? nil : key)
                 group.addTask {
-                    (i, try await self.get(QueryResult<BaseItem>.self, "/Items", items).items ?? [])
+                    do {
+                        return (i, .success(try await self.get(QueryResult<BaseItem>.self, "/Items", items).items ?? []))
+                    } catch {
+                        return (i, .failure(error))
+                    }
                 }
             }
-            var out = [[BaseItem]](repeating: [], count: active.count)
-            for try await (i, list) in group { out[i] = list }
+            var out = [Result<[BaseItem], Error>](repeating: .success([]), count: active.count)
+            for await (i, r) in group { out[i] = r }
             return out
         }
+        if case .failure(let error) = results.first, results.allSatisfy({ if case .failure = $0 { true } else { false } }) {
+            throw error
+        }
+        var lists: [[BaseItem]] = []
         var next = cursor
         for (i, key) in active.enumerated() {
-            next.offsets[key, default: 0] += lists[i].count
-            if lists[i].count < per { next.exhausted.insert(key) }
+            guard case .success(let list) = results[i] else { lists.append([]); continue }
+            lists.append(list)
+            next.offsets[key, default: 0] += list.count
+            if list.count < per { next.exhausted.insert(key) }
         }
         return (CatalogCursor.interleave(lists), next)
     }

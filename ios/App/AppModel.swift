@@ -22,6 +22,13 @@ final class AppModel {
     /// The anime libraries on this server (found once, then cached).
     private(set) var animeLibraries: AnimeLibraries = JSONFile.read(AnimeLibraries.self, from: AppPaths.libraries) ?? .none
     private(set) var librariesLoaded = false
+    private(set) var librariesLoading = false
+
+    /// Asks the server for the libraries again (Anime tab "Riprova", foreground).
+    func reloadLibraries() {
+        guard let api, !librariesLoading else { return }
+        Task { await loadLibraries(api: api) }
+    }
 
     /// Bumped whenever home should reload (foreground, player closed, login).
     private(set) var homeRefreshToken = 0
@@ -98,15 +105,29 @@ final class AppModel {
     }
 
     /// Finds the anime libraries by name and the folder ids their series use.
+    /// Retried a few times: if the first call fails (no network yet, a slow
+    /// server) the Anime tab would otherwise stay empty until the next launch.
     private func loadLibraries(api: JellyfinAPI) async {
         if !animeLibraries.all.isEmpty { librariesLoaded = true }
-        guard let views = try? await api.views() else { librariesLoaded = true; return }
+        librariesLoading = true
+        defer { librariesLoading = false }
+        var views: [BaseItem]?
+        for attempt in 0..<3 {
+            if let v = try? await api.views() { views = v; break }
+            try? await Task.sleep(for: .seconds(2 * (attempt + 1)))
+        }
+        guard let views else { librariesLoaded = true; return }
         var libs = AnimeLibraries.from(views: views.map { (name: $0.name ?? "", id: $0.id) })
         libs.folderIds = await withTaskGroup(of: String?.self) { group in
             for id in libs.all { group.addTask { try? await api.folderId(ofLibrary: id) } }
             var out: [String] = []
             for await f in group { if let f { out.append(f) } }
-            return out
+            // Sorted: the replies come back in any order, and a different
+            // order would rebuild the Anime tab on every launch.
+            return out.sorted()
+        }
+        if libs.folderIds.count < libs.all.count, libs.all == animeLibraries.all {
+            libs.folderIds = Array(Set(libs.folderIds + animeLibraries.folderIds)).sorted()
         }
         if libs != animeLibraries {
             animeLibraries = libs
@@ -183,6 +204,7 @@ final class AppModel {
         guard phase == .ready else { return }
         Task { await progress.flush() }
         homeRefreshToken += 1
+        if animeLibraries.all.isEmpty { reloadLibraries() }
     }
 
     /// The model for a player screen: the running one if the screen comes back

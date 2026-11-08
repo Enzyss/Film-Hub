@@ -94,12 +94,30 @@ struct BrowseTab: View {
 
     var body: some View {
         if kind == .anime {
-            if app.animeLibraries.all.isEmpty && !app.librariesLoaded {
+            if app.animeLibraries.all.isEmpty && (!app.librariesLoaded || app.librariesLoading) {
                 ProgressView()
                     .tint(Theme.Colors.accent)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Theme.Colors.background)
                     .navigationTitle(kind.title)
+            } else if app.animeLibraries.all.isEmpty {
+                // The server did not answer: say so instead of an empty page.
+                VStack(spacing: Theme.Space.l) {
+                    Image(systemName: "sparkles")
+                        .font(.largeTitle)
+                        .foregroundStyle(Theme.Colors.accent)
+                    Text("Non riesco a trovare le librerie anime sul server.")
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.Colors.textSecondary)
+                        .multilineTextAlignment(.center)
+                    Button("Riprova") { app.reloadLibraries() }
+                        .buttonStyle(.borderedProminent)
+                        .tint(Theme.Colors.accent)
+                }
+                .padding(Theme.Space.xxl)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Theme.Colors.background)
+                .navigationTitle(kind.title)
             } else {
                 BrowseContent(kind: kind, anime: app.animeLibraries)
                     .id(app.animeLibraries)  // new rows if the libraries change
