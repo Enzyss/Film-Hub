@@ -43,6 +43,24 @@ final class PlayerModel {
     /// Show the card this long before the end (the server has no credits markers).
     static let upNextLead: Double = 30
 
+    // Handover VLC -> Apple player, for Picture in Picture. Measured on the
+    // user's phone: opening through the server first made films take 20-30 s.
+    // Now VLC starts at once; after a while the Apple player prepares the same
+    // film silently and takes over at the same second.
+    @ObservationIgnored private var handoffURL: URL?
+    @ObservationIgnored private var handoffChoice: TrackChoice?
+    @ObservationIgnored private var handoffEngine: AppleEngine?
+    @ObservationIgnored private var handoffTarget: Double = 0
+    @ObservationIgnored private var handoffStartedAt = Date()
+    @ObservationIgnored private var handoffAttempts = 0
+    @ObservationIgnored private var handoffTask: Task<Void, Never>?
+    /// Smooth VLC playback before the Apple player starts preparing.
+    static let handoffDelay: TimeInterval = 10
+    /// How far ahead of VLC the Apple player prepares (the server needs a few
+    /// seconds to start the stream at a new point).
+    static let handoffLead: Double = 20
+    static let handoffMaxAttempts = 3
+
     // Picture in Picture
     private(set) var isPiPActive = false
     /// A short message over the video ("Picture in Picture non disponibile…").
@@ -169,7 +187,7 @@ final class PlayerModel {
             let full = try await api.item(id: item.id)
             source = full.mediaSources?.first
         }
-        guard var source else { throw JellyfinError.http(404) }
+        guard let source else { throw JellyfinError.http(404) }
         mediaSourceId = source.id
         if let rt = source.runTimeTicks, rt > 0 { runTimeTicks = rt }
 
@@ -179,15 +197,19 @@ final class PlayerModel {
 
         let quick = PlaybackDecider.isRepackagedQuickly(source)
         let subtitlesOn = choice.subtitleIndex != nil
-        // The server's stream must carry the chosen audio (Italian, say) when
-        // it is not the file's default: ask again with the choice (~0.5 s).
-        if requestedChoice == nil, quick, !subtitlesOn, preference != .alwaysVLC,
-           choice.audioIndex != source.defaultAudioStream?.index,
-           let again = try? await api.playbackInfo(itemId: item.id, startTicks: Ticks.fromSeconds(startSeconds),
-                                                   mediaSourceId: source.id, choice: choice),
-           let s = again.mediaSources?.first(where: { $0.id == source.id }) {
-            source = s
-            playSessionId = again.playSessionId
+        cancelHandoff()
+        handoffAttempts = 0
+        handoffURL = nil
+        handoffChoice = nil
+        if preference == .automatic, quick, !subtitlesOn,
+           !PlaybackDecider.isAppleCompatible(source),
+           let t = api.transcodeURL(source.transcodingUrl) {
+            handoffURL = t
+            // The server's stream must carry the chosen audio (Italian, say):
+            // fetched later, while the film already plays.
+            if choice.audioIndex != source.defaultAudioStream?.index, requestedChoice == nil {
+                handoffChoice = choice
+            }
         }
 
         let compatible = PlaybackDecider.isAppleCompatible(source)
@@ -205,7 +227,6 @@ final class PlayerModel {
             transcodeURL: api.transcodeURL(source.transcodingUrl),
             preference: preference,
             needsTrackControl: Tracks.needsTrackControl(choice, source: source),
-            repackagedQuickly: quick,
             subtitlesOn: subtitlesOn
         )
     }
@@ -265,6 +286,7 @@ final class PlayerModel {
         if isPlaying {
             wantsToPlay = false
             engine.pause()
+            cancelHandoff()
             phase = .paused
         } else {
             wantsToPlay = true
@@ -276,6 +298,7 @@ final class PlayerModel {
     }
 
     func seek(to seconds: Double) {
+        cancelHandoff()
         let target = min(max(seconds, 0), duration > 0 ? duration - 1 : seconds)
         engine?.seek(to: target)
         position = target
@@ -388,6 +411,7 @@ final class PlayerModel {
         let run = runTimeTicks
         Task { await sync.report(.stopped, finished, runTimeTicks: run) }
 
+        cancelHandoff()
         item = next
         upNext = nil
         upNextCountdown = nil
@@ -434,8 +458,21 @@ final class PlayerModel {
             pendingPiPTicks = 0
             return
         }
-        // On VLC: reopen the same second with the Apple player on the server's
-        // HLS stream (it repackages the file, ~3.5 s on the user's server).
+        // On VLC with a handover possible: finish it now, or as soon as the
+        // Apple player is ready, then open PiP.
+        if handoffURL != nil {
+            pendingPiP = true
+            pendingPiPTicks = 0
+            if let h = handoffEngine, h.isPrepared {
+                completeHandoff()
+            } else {
+                if handoffEngine == nil { armHandoff(lead: 12) }
+                show(notice: "Picture in Picture disponibile tra pochi secondi…")
+            }
+            return
+        }
+        // Otherwise: reopen the same second with the Apple player on the
+        // server's stream (slower: the server prepares it from scratch).
         guard let idx = routes.firstIndex(where: { !$0.usesVLC }) else {
             show(notice: "Picture in Picture non disponibile per questo file.")
             return
@@ -447,6 +484,94 @@ final class PlayerModel {
         phase = .preparing
         open(at: position)
         openingMessage = "Preparo il Picture in Picture…"
+    }
+
+    // MARK: Handover
+
+    private var handoffPossible: Bool {
+        handoffURL != nil && engine is VLCEngine && !closed && handoffAttempts < Self.handoffMaxAttempts
+    }
+
+    private func updateHandoff(now: Date) {
+        guard handoffPossible else { return }
+        guard let h = handoffEngine else {
+            // Start preparing after 10 s of smooth playback.
+            if hasPlayedAnything, wantsToPlay, phase == .playing,
+               now.timeIntervalSince(smoothSince) >= Self.handoffDelay {
+                armHandoff(lead: Self.handoffLead)
+            }
+            return
+        }
+        if h.preparationFailed || now.timeIntervalSince(handoffStartedAt) > 60 {
+            cancelHandoff()
+            handoffAttempts += 1
+            return
+        }
+        let prepared = h.isPrepared
+        if position >= handoffTarget - 0.25 {
+            if prepared {
+                completeHandoff()
+            } else {
+                // VLC got there first: try again further ahead.
+                cancelHandoff()
+                handoffAttempts += 1
+            }
+        } else if prepared, pendingPiP {
+            completeHandoff()  // PiP asked for: no need to wait for the mark
+        }
+    }
+
+    private func armHandoff(lead: Double) {
+        guard let url = handoffURL, handoffEngine == nil else { return }
+        let target = position + lead
+        handoffTarget = target
+        handoffStartedAt = Date()
+        let choice = handoffChoice
+        let itemId = item.id
+        let msid = mediaSourceId
+        let api = api
+        handoffTask?.cancel()
+        handoffTask = Task { [weak self] in
+            var streamURL = url
+            if let choice,
+               let info = try? await api.playbackInfo(itemId: itemId, startTicks: Ticks.fromSeconds(target),
+                                                      mediaSourceId: msid, choice: choice),
+               let fresh = api.transcodeURL(info.mediaSources?.first(where: { $0.id == msid })?.transcodingUrl
+                                            ?? info.mediaSources?.first?.transcodingUrl) {
+                streamURL = fresh
+            }
+            guard let self, !Task.isCancelled, self.item.id == itemId, !self.closed else { return }
+            let e = AppleEngine()
+            e.prepare(url: streamURL, startSeconds: target)
+            self.handoffEngine = e
+        }
+    }
+
+    private func cancelHandoff() {
+        handoffTask?.cancel()
+        handoffTask = nil
+        handoffEngine?.stop()
+        handoffEngine = nil
+    }
+
+    /// The Apple player takes over at VLC's current second.
+    private func completeHandoff() {
+        guard let apple = handoffEngine, let old = engine else { return }
+        handoffEngine = nil
+        handoffTask = nil
+        let at = max(position, old.currentSeconds)
+        apple.onPiP = { [weak self] event in self?.handlePiP(event) }
+        apple.startPrepared(at: at)
+        engine = apple
+        old.stop()
+        if let idx = routes.firstIndex(where: { !$0.usesVLC }) { routeIndex = idx }
+        routeLabel = routes.indices.contains(routeIndex) ? routes[routeIndex].label : routeLabel
+        lastSeenPosition = at
+        lastAdvanceAt = Date()
+        smoothSince = Date()
+        handoffURL = nil
+        audioOptions = []
+        subtitleOptions = []
     }
 
     private func handlePiP(_ event: PiPEvent) {
@@ -483,6 +608,7 @@ final class PlayerModel {
     func close() {
         guard !closed else { return }
         closed = true
+        cancelHandoff()
         tickTask?.cancel()
         tickTask = nil
         if engine != nil, startedReported || position > 0 {
@@ -610,6 +736,7 @@ final class PlayerModel {
 
         if hasPlayedAnything { refreshTracks() }
         updateUpNext()
+        updateHandoff(now: now)
 
         // PiP asked for: start it as soon as the Apple player is ready.
         if pendingPiP, hasPlayedAnything, engine.supportsPiP {
@@ -631,6 +758,7 @@ final class PlayerModel {
 
     /// Reopens the same route at the same second. Fixes most network stalls.
     private func reload(reason: String) {
+        cancelHandoff()
         reloadsInARow += 1
         guard reloadsInARow <= Self.maxReloads else {
             phase = .failed("\(reason) La connessione al server è instabile.")

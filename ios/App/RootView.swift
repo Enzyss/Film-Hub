@@ -105,7 +105,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Riproduzione")
                 } footer: {
-                    Text("Automatico: i file normali si aprono col player Apple (Picture in Picture anche uscendo dall'app); 4K Dolby Vision, audio DTS/TrueHD e sottotitoli attivi con VLC, che li apre più in fretta. Sempre VLC: apertura più veloce, PiP solo dal tasto e più lento. Sempre Apple: PiP su tutto, ma i 4K possono metterci molto ad aprirsi.")
+                    Text("Automatico: il film parte subito con VLC; dopo una decina di secondi, se il file lo permette, il player Apple prende il suo posto allo stesso secondo e da lì in poi c'è il Picture in Picture (anche uscendo dall'app). Restano su VLC 4K Dolby Vision, audio DTS/TrueHD e sottotitoli attivi. Sempre VLC: niente passaggio. Sempre Apple: PiP subito, ma l'apertura è molto più lenta.")
                 }
                 Section {
                     LabeledContent("Posizioni da inviare", value: "\(pendingCount)")

@@ -144,6 +144,51 @@ final class AppleEngine: PlaybackEngine {
 
     func stopPiP() { pip?.stopPictureInPicture() }
 
+    // MARK: Silent preparation (for the handover from VLC)
+
+    private var prerolled = false
+    private var prerollAsked = false
+
+    /// Loads the stream muted and paused at `startSeconds`, and fills its
+    /// buffer, without showing anything. `isPrepared` turns true when a call
+    /// to `startPrepared()` would start at once.
+    func prepare(url: URL, startSeconds: Double) {
+        prerolled = false
+        prerollAsked = false
+        player.isMuted = true
+        let item = AVPlayerItem(asset: AVURLAsset(url: url))
+        item.preferredForwardBufferDuration = 8
+        player.replaceCurrentItem(with: item)
+        player.seek(to: CMTime(seconds: startSeconds, preferredTimescale: 600),
+                    toleranceBefore: .zero, toleranceAfter: .zero)
+    }
+
+    /// Call often: asks for the buffer once the stream is ready.
+    var isPrepared: Bool {
+        guard let item = player.currentItem else { return false }
+        if item.status == .failed { return false }
+        if item.status == .readyToPlay, !prerollAsked {
+            prerollAsked = true
+            player.preroll(atRate: 1) { [weak self] done in
+                Task { @MainActor in self?.prerolled = done }
+            }
+        }
+        return prerolled
+    }
+
+    var preparationFailed: Bool { player.currentItem?.status == .failed }
+
+    /// Starts the prepared stream, with sound, from `seconds`.
+    func startPrepared(at seconds: Double) {
+        player.isMuted = false
+        let now = currentSeconds
+        if abs(now - seconds) > 0.4 {
+            player.seek(to: CMTime(seconds: seconds, preferredTimescale: 600),
+                        toleranceBefore: .zero, toleranceAfter: .zero)
+        }
+        player.play()
+    }
+
     func load(url: URL, startSeconds: Double, tracks: StartTracks) {
         let asset = AVURLAsset(url: url)
         let item = AVPlayerItem(asset: asset)
